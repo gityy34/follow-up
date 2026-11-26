@@ -3,7 +3,7 @@ export const outcomes = { RESOLVED: 'Successful / Resolved', FOLLOW_UP: 'Follow-
 export const priorities = { NORMAL: 'Normal', HIGH: 'High priority', URGENT: 'Urgent' };
 export const reminders = { DEFAULT: 'Default', DAY: 'One day before', SAME_DAY: 'Same day at 9 AM', HOUR: 'One hour before', SHORT: '15 minutes before', CUSTOM: 'Custom date and time', OFF: 'Off' };
 export const categories = ['Waiting for customer decision', 'Need more information', 'Price / budget concerns', 'Technical issue', 'Other'];
-export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false, profileReview: 0, photo: '', photoSource: '', font: 'DEFAULT' };
+export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false, profileReview: 0, photo: '', photoSource: '', font: 'DEFAULT', paymentPeriod: 'DAILY' };
 export const profileReview = 1;
 export const fonts = { DEFAULT: 'App default', DEVICE: 'Device font', MODERN: 'Manrope', EDITORIAL: 'Serif', MONO: 'Monospace' };
 export const validPhoto = (photo, limit = 90000) => typeof photo === 'string' && photo.length >= 4 && photo.length <= limit &&
@@ -11,7 +11,7 @@ export const validPhoto = (photo, limit = 90000) => typeof photo === 'string' &&
 const key = 'you-follow-ups.v1';
 export const uuid = () => crypto.randomUUID();
 export const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
-export const workspace = () => ({ customers: [], followUps: [], calls: [], timeline: [], settings: { ...defaults } });
+export const workspace = () => ({ customers: [], followUps: [], calls: [], timeline: [], payments: [], settings: { ...defaults } });
 export function customer(input = {}, time = Date.now()) {
   return { id: uuid(), displayName: '', phoneNumber: '', email: '', company: '', tags: '', notes: '', stage: 'NEW',
     priority: 'NORMAL', archived: false, demo: false, createdAt: time, updatedAt: time, ...input };
@@ -100,16 +100,27 @@ function reportStart(period, now) {
   return period === '24h' ? now - 86400000 : new Date(day(addDays(now, -(periodDays[period] ?? 1) + 1)) + 'T00:00:00').getTime();
 }
 
-export function journeySnapshot(data, period, now = Date.now()) {
+export function journeyRecords(data, period, now = Date.now()) {
   const from = reportStart(period, now);
   const end = period === '24h' ? now + 1 : new Date(day(addDays(now,1)) + 'T00:00:00').getTime();
   const activeIds = new Set(data.customers.filter(c => !c.archived).map(c => c.id));
+  const contacted = new Map();
+  for (const call of data.calls.filter(c => c.endedAt >= from && c.endedAt <= now).sort((a,b) => b.endedAt-a.endedAt)) {
+    if (!contacted.has(call.customerId)) contacted.set(call.customerId,call);
+  }
   return {
-    newCustomers: data.customers.filter(c => c.createdAt >= from && c.createdAt <= now).length,
-    contacted: new Set(data.calls.filter(c => c.endedAt >= from && c.endedAt <= now).map(c => c.customerId)).size,
-    followUps: data.followUps.filter(f => activeIds.has(f.customerId) && f.status !== 'DELETED' && f.dueAt >= from && f.dueAt < end).length,
-    deals: dealTotals(data.calls,from,now+1)
+    new: data.customers.filter(c => c.createdAt >= from && c.createdAt <= now).sort((a,b) => b.createdAt-a.createdAt),
+    contacted: [...contacted.values()],
+    follow: data.followUps.filter(f => activeIds.has(f.customerId) && f.status !== 'DELETED' && f.dueAt >= from && f.dueAt < end).sort(orderFollow),
+    resolved: data.calls.filter(c => c.outcome === 'RESOLVED' && (c.outcomeAt ?? c.endedAt) >= from && (c.outcomeAt ?? c.endedAt) <= now)
+      .sort((a,b) => (b.outcomeAt ?? b.endedAt)-(a.outcomeAt ?? a.endedAt))
   };
+}
+
+export function journeySnapshot(data, period, now = Date.now()) {
+  const rows = journeyRecords(data,period,now);
+  return { newCustomers:rows.new.length, contacted:rows.contacted.length, followUps:rows.follow.length,
+    deals:dealTotals(rows.resolved,reportStart(period,now),now+1) };
 }
 
 const wallFormatters = new Map();
@@ -187,6 +198,55 @@ function addAmounts(left, right) {
   const total = BigInt(leftWhole + leftFraction.padEnd(scale, '0')) + BigInt(rightWhole + rightFraction.padEnd(scale, '0'));
   const digits = total.toString().padStart(scale + 1, '0');
   return scale ? digits.slice(0, -scale) + '.' + digits.slice(-scale) : digits;
+}
+
+export const paymentPeriods = { DAILY: 'Daily', MONTHLY: 'Monthly' };
+
+export function validPaymentDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith('0000')) return false;
+  const date = new Date(value+'T00:00:00Z');
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === value;
+}
+
+export function savePayments(data, date, input, currency, id = '', now = Date.now()) {
+  if (!validPaymentDate(date)) throw new Error('Choose a valid date.');
+  if (id) {
+    const row = data.payments.find(row => row.id === id);
+    if (!row) throw new Error('This payment is unavailable.');
+    const amount = normalizeAmount(input);
+    if (amount == null) throw new Error('Enter a valid amount.');
+    Object.assign(row,{date,amount,updatedAt:Math.max(row.updatedAt,now)});
+    return 1;
+  }
+  if (!validCurrency(currency)) throw new Error('Choose a valid currency.');
+  const lines = input.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!lines.length) throw new Error('Enter at least one amount.');
+  const rows = lines.map((line,i) => {
+    const amount = normalizeAmount(line);
+    if (amount == null) throw new Error(`Enter a valid amount on line ${i+1}.`);
+    return {id:uuid(),date,amount,currency,createdAt:now,updatedAt:now};
+  });
+  data.payments = [...rows,...data.payments];
+  return rows.length;
+}
+
+export function paymentSummary(data, date, monthly = false, now = Date.now()) {
+  const first = monthly ? date.slice(0,7)+'-01' : date;
+  const end = new Date(first+'T00:00:00Z');
+  if (monthly) end.setUTCMonth(end.getUTCMonth()+1);
+  else end.setUTCDate(end.getUTCDate()+1);
+  const startAt = new Date(first+'T00:00:00').getTime();
+  const endAt = new Date(end.toISOString().split('T')[0]+'T00:00:00').getTime();
+  const calls = dealTotals(data.calls,startAt,Math.min(endAt,now+1)).amounts;
+  const manual = {};
+  for (const row of data.payments) {
+    if (monthly ? row.date.slice(0,7) === date.slice(0,7) : row.date === date) {
+      manual[row.currency] = addAmounts(manual[row.currency] ?? '0',row.amount);
+    }
+  }
+  const currencies = [...new Set([...Object.keys(calls),...Object.keys(manual)])].sort();
+  const total = Object.fromEntries(currencies.map(currency => [currency,addAmounts(manual[currency] ?? '0',calls[currency] ?? '0')]));
+  return { manual,calls,total };
 }
 
 export function withOutcome(call, outcome, amount, currency, now = Date.now()) {
@@ -273,23 +333,28 @@ export function validate(data) {
     (c.dealAmount == null ? c.dealCurrency == null :
       c.outcome === 'RESOLVED' && typeof c.dealAmount === 'string' && normalizeAmount(c.dealAmount) === c.dealAmount && validCurrency(c.dealCurrency)));
   unique(data.timeline, e => records.has(e.customerId) && text(e.eventType,120) && text(e.referenceId,120) && typeof e.displayPayload === "string" && time(e.eventTime));
+  const payments = Object.hasOwn(data,'payments') ? data.payments : [];
+  unique(payments, row => validPaymentDate(row.date) && typeof row.amount === 'string' && normalizeAmount(row.amount) === row.amount &&
+    validCurrency(row.currency) && time(row.createdAt) && time(row.updatedAt) && row.updatedAt >= row.createdAt);
   const settings = { ...defaults, ...data.settings };
   if (settings.themeMode === 'SYSTEM' && !Object.hasOwn(data.settings ?? {},'profileConfigured')) settings.themeMode = 'NEON';
   if (!validPhoto(settings.photo)) settings.photo = '';
   if (!validPhoto(settings.photoSource,350000)) settings.photoSource = '';
   if (!Object.hasOwn(fonts,settings.font)) settings.font = 'DEFAULT';
+  if (!Object.hasOwn(paymentPeriods,settings.paymentPeriod)) settings.paymentPeriod = 'DAILY';
   if (!Number.isInteger(settings.profileReview) || settings.profileReview < 0) settings.profileReview = 0;
   if (!['NEON','SYSTEM','LIGHT','DARK'].includes(settings.themeMode) || !['Violet','Ocean','Forest'].includes(settings.selectedPalette) ||
       !Number.isInteger(settings.goal) || settings.goal < 1 || settings.goal > 500 || !Number.isInteger(settings.retentionDays) ||
       settings.retentionDays < 1 || settings.retentionDays > 3650 || !validCurrency(settings.currency) || !text(settings.operatorName,60) ||
       !text(settings.displayName,60) || typeof settings.profileConfigured !== 'boolean') throw new Error('Settings are invalid.');
-  return { ...data, settings };
+  return { ...data, settings, payments };
 }
 export function visible(data, showDemo) {
   const customers = data.customers.filter(c => c.demo === showDemo);
   const ids = new Set(customers.map(c => c.id));
   return { ...data, customers, followUps: data.followUps.filter(f => ids.has(f.customerId)),
-    calls: data.calls.filter(c => ids.has(c.customerId)), timeline: data.timeline.filter(e => ids.has(e.customerId)) };
+    calls: data.calls.filter(c => ids.has(c.customerId)), timeline: data.timeline.filter(e => ids.has(e.customerId)),
+    payments: showDemo ? [] : data.payments };
 }
 export function report(data, period, now = Date.now()) {
   const days = periodDays[period] ?? 1;
@@ -348,7 +413,7 @@ export async function encrypt(data, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const raw = JSON.stringify(data);
-  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.5.0' };
+  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.6.0' };
   const payload = encoder.encode(JSON.stringify({ manifest, data: raw }));
   if (payload.length > 100 * 1024 * 1024) throw new Error('Backup is too large.');
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password, salt), payload);

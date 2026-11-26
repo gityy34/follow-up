@@ -15,6 +15,9 @@ internal interface FollowDao {
     @Query("SELECT * FROM followups ORDER BY dueAt ASC, priority DESC") fun followUps(): Flow<List<FollowUp>>
     @Query("SELECT * FROM calls ORDER BY endedAt DESC") fun calls(): Flow<List<CallLog>>
     @Query("SELECT * FROM timeline ORDER BY eventTime DESC") fun timeline(): Flow<List<TimelineEvent>>
+    @Query("SELECT * FROM payments ORDER BY date DESC, createdAt DESC, id DESC") fun payments(): Flow<List<PaymentEntry>>
+    @Query("SELECT * FROM payments") suspend fun allPayments(): List<PaymentEntry>
+    @Query("SELECT * FROM payments WHERE id = :id") suspend fun payment(id: String): PaymentEntry?
     @Query("SELECT * FROM customers WHERE id = :id") suspend fun customer(id: String): Customer?
     @Query("SELECT * FROM followups WHERE id = :id") suspend fun followUp(id: String): FollowUp?
     @Query("SELECT * FROM followups") suspend fun allFollowUps(): List<FollowUp>
@@ -33,14 +36,17 @@ internal interface FollowDao {
     @Insert suspend fun insert(call: CallLog)
     @Update suspend fun update(call: CallLog)
     @Insert suspend fun insert(event: TimelineEvent)
+    @Insert suspend fun insertPayments(rows: List<PaymentEntry>)
+    @Update suspend fun update(row: PaymentEntry)
+    @Query("DELETE FROM payments") suspend fun clearPayments()
     @Query("DELETE FROM customers") suspend fun clearRecords()
     @Query("DELETE FROM customers WHERE demo = 1") suspend fun removeDemo()
     @Query("DELETE FROM followups WHERE status = 'DELETED' AND updatedAt < :before") suspend fun purgeDeleted(before: Long): Int
     @Query("DELETE FROM restore_journal WHERE id = 1") suspend fun clearJournal()
 }
 
-@Database(entities = [Customer::class, FollowUp::class, CallLog::class, TimelineEvent::class, RestoreJournal::class],
-    version = 3, exportSchema = true)
+@Database(entities = [Customer::class, FollowUp::class, CallLog::class, TimelineEvent::class, RestoreJournal::class, PaymentEntry::class],
+    version = 4, exportSchema = true)
 internal abstract class FollowDatabase : RoomDatabase() {
     abstract val dao: FollowDao
 
@@ -57,6 +63,12 @@ internal abstract class FollowDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE calls ADD COLUMN outcomeAt INTEGER")
             }
         }
+        val migration3To4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS payments (id TEXT NOT NULL PRIMARY KEY, date TEXT NOT NULL, amount TEXT NOT NULL, currency TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_payments_date ON payments (date)")
+            }
+        }
     }
 }
 
@@ -70,6 +82,12 @@ internal class SettingsStore(context: Context) {
     suspend fun set(value: AppSettings) {
         data.edit { it[key] = settingsJson(value).toString() }
     }
+    suspend fun setPaymentPeriod(value: PaymentPeriod) {
+        data.edit { prefs ->
+            val current = settingsFromJson(JSONObject(prefs[key] ?: "{}"))
+            prefs[key] = settingsJson(current.copy(paymentPeriod = value)).toString()
+        }
+    }
 }
 
 internal class Repository(private val database: FollowDatabase, val settings: SettingsStore) {
@@ -77,6 +95,20 @@ internal class Repository(private val database: FollowDatabase, val settings: Se
     val workspace = combine(dao.customers(), dao.followUps(), dao.calls(), dao.timeline(), settings.flow) {
             customers, followUps, calls, timeline, preferences ->
         Workspace(customers, followUps, calls, timeline, preferences)
+    }.combine(dao.payments()) { existing, payments -> existing.copy(payments = payments) }
+
+    suspend fun addPayments(date: String, amounts: String, currency: String) {
+        require(paymentDate(date) != null) { "Choose a valid date." }
+        require(validCurrency(currency)) { "Choose a valid currency." }
+        val rows = paymentAmounts(amounts).map { PaymentEntry(date = date, amount = it, currency = currency) }
+        dao.insertPayments(rows)
+    }
+
+    suspend fun editPayment(id: String, date: String, amount: String) = database.withTransaction {
+        require(paymentDate(date) != null) { "Choose a valid date." }
+        val normalized = requireNotNull(normalizeAmount(amount)) { "Enter a valid amount." }
+        val old = checkNotNull(dao.payment(id)) { "This payment is unavailable." }
+        dao.update(old.copy(date = date, amount = normalized, updatedAt = maxOf(old.updatedAt, now())))
     }
 
     private suspend fun event(customer: String, kind: String, reference: String, payload: String) {
@@ -202,15 +234,17 @@ internal class Repository(private val database: FollowDatabase, val settings: Se
     }
 
     suspend fun snapshot() = database.withTransaction {
-        Workspace(dao.allCustomers(), dao.allFollowUps(), dao.allCalls(), dao.allTimeline(), settings.current())
+        Workspace(dao.allCustomers(), dao.allFollowUps(), dao.allCalls(), dao.allTimeline(), settings.current(), dao.allPayments())
     }
 
     suspend fun replace(value: Workspace) = database.withTransaction {
         dao.clearRecords()
+        dao.clearPayments()
         value.customers.forEach { dao.put(it) }
         value.followUps.forEach { dao.put(it.copy(reminderScheduledAt = null, reminderStatus = "pending")) }
         value.calls.forEach { dao.insert(it) }
         value.timeline.forEach { dao.insert(it) }
+        dao.insertPayments(value.payments)
         dao.put(RestoreJournal(settingsJson = settingsJson(value.settings).toString()))
     }
 

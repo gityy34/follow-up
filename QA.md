@@ -40,3 +40,9 @@ Android builds use compile and target SDK 36, minimum Android API 26, JDK 21 and
 - Thirteen Android JVM tests passed in both Debug and Release. Debug lint and the Android instrumentation APK build passed. Coverage includes photo crop bounds, encrypted backup of the crop source, and separate local-day totals for call and payment dates.
 - Eight web data tests and both fresh and existing profile DOM flows passed. The flows cover the road period menu, reminders, today’s chart, exact multi-currency amounts, and profile photo crop, Apply, cancellation and removal from both entry points.
 - The DOM photo tests simulate decoding. The managed browser preview relay could not start. Native animation playback, real photo selection and visual layout still need device QA.
+
+## Version 1.6.0 journey details and dated payments
+
+- Fifteen Android JVM tests and ten web data tests cover the four stage detail lists, exact decimal totals by local date and currency, bulk validation and payment backup data. The SQLite 3 → 4 migration preserved an existing customer and deal and matched the exported Room schema.
+- The web DOM flow exercised all four inline lists, browser and on-screen Back, one reload animation during rapid repeated clicks, batch save, moving an edited entry to another day, and Daily, Monthly and selected-date totals.
+- Debug lint, test APK compilation, and signed Android packaging passed. The managed browser preview listener was unavailable. Device execution and visual animation playback remain unverified.

@@ -143,7 +143,8 @@ data class AppSettings(
     val profileReview: Int = 0,
     val photo: String = "",
     val photoSource: String = "",
-    val font: AppFont = AppFont.DEFAULT
+    val font: AppFont = AppFont.DEFAULT,
+    val paymentPeriod: PaymentPeriod = PaymentPeriod.DAILY
 )
 
 data class Workspace(
@@ -151,7 +152,8 @@ data class Workspace(
     val followUps: List<FollowUp> = emptyList(),
     val calls: List<CallLog> = emptyList(),
     val timeline: List<TimelineEvent> = emptyList(),
-    val settings: AppSettings = AppSettings()
+    val settings: AppSettings = AppSettings(),
+    val payments: List<PaymentEntry> = emptyList()
 )
 
 fun stageAfter(outcome: Outcome) = when (outcome) {
@@ -244,6 +246,17 @@ fun remindersFor(data: Workspace, day: ReminderDay, time: Long, timezone: ZoneId
     }.sortedWith(compareBy<ScheduledReminder> { it.at }.thenBy { it.followUp.dueAt })
 }
 
+internal enum class JourneyStage(val title: String) { NEW("New"), CONTACTED("Contacted"), FOLLOW_UP("Follow-up"), SUCCESSFUL("Successful") }
+
+internal data class JourneyRecords(val new: List<Customer>, val contacted: List<CallLog>, val followUps: List<FollowUp>, val successful: List<CallLog>) {
+    fun count(stage: JourneyStage): Int = when (stage) {
+        JourneyStage.NEW -> new.size
+        JourneyStage.CONTACTED -> contacted.size
+        JourneyStage.FOLLOW_UP -> followUps.size
+        JourneyStage.SUCCESSFUL -> successful.size
+    }
+}
+
 data class JourneySnapshot(val new: Int, val contacted: Int, val followUps: Int, val deals: DealTotals)
 
 fun reportStart(period: ReportPeriod, time: Long, timezone: ZoneId): Long =
@@ -251,17 +264,24 @@ fun reportStart(period: ReportPeriod, time: Long, timezone: ZoneId): Long =
     else Instant.ofEpochMilli(time).atZone(timezone).toLocalDate().minusDays(period.days.toLong() - 1)
         .atStartOfDay(timezone).toInstant().toEpochMilli()
 
-fun journeySnapshot(data: Workspace, period: ReportPeriod, time: Long, timezone: ZoneId): JourneySnapshot {
+internal fun journeyRecords(data: Workspace, period: ReportPeriod, time: Long, timezone: ZoneId): JourneyRecords {
     val start = reportStart(period, time, timezone)
     val last = if (period == ReportPeriod.LAST_24_HOURS) time + 1
         else Instant.ofEpochMilli(time).atZone(timezone).toLocalDate().plusDays(1).atStartOfDay(timezone).toInstant().toEpochMilli()
     val active = data.customers.filterNot { it.archived }.mapTo(hashSetOf()) { it.id }
-    return JourneySnapshot(
-        data.customers.count { it.createdAt in start..time },
-        data.calls.filter { it.endedAt in start..time }.distinctBy { it.customerId }.size,
-        data.followUps.count { it.customerId in active && it.status != FollowStatus.DELETED && it.dueAt in start until last },
-        dealTotals(data.calls, start, time + 1)
+    return JourneyRecords(
+        data.customers.filter { it.createdAt in start..time }.sortedByDescending { it.createdAt },
+        data.calls.filter { it.endedAt in start..time }.sortedByDescending { it.endedAt }.distinctBy { it.customerId },
+        data.followUps.filter { it.customerId in active && it.status != FollowStatus.DELETED && it.dueAt in start until last }.sortedBy { it.dueAt },
+        data.calls.filter { it.outcome == Outcome.RESOLVED && (it.outcomeAt ?: it.endedAt) in start..time }
+            .sortedByDescending { it.outcomeAt ?: it.endedAt }
     )
+}
+
+fun journeySnapshot(data: Workspace, period: ReportPeriod, time: Long, timezone: ZoneId): JourneySnapshot {
+    val records = journeyRecords(data, period, time, timezone)
+    return JourneySnapshot(records.new.size, records.contacted.size, records.followUps.size,
+        dealTotals(records.successful, reportStart(period, time, timezone), time + 1))
 }
 
 data class DealTotals(val successful: Int, val amounts: Map<String, String>)

@@ -148,4 +148,50 @@ class DomainTest {
         assertEquals(1, result.pending)
         assertEquals("1250.50", result.deals.amounts["PKR"])
     }
+
+    @Test fun paymentSummariesKeepExactCurrencyTotalsAndLocalDates() {
+        val tz = ZoneId.of("Asia/Karachi")
+        val paid = ZonedDateTime.of(2026, 12, 1, 0, 10, 0, 0, tz)
+        val at = paid.toInstant().toEpochMilli()
+        val owner = Customer(displayName = "Customer", phoneNumber = "")
+        val call = CallLog(customerId = owner.id, startedAt = at - 3_600_000L, endedAt = at - 1_800_000L,
+            outcome = Outcome.RESOLVED, outcomeAt = at, dealAmount = "0.005", dealCurrency = "PKR")
+        val rows = listOf(
+            PaymentEntry(date = "2026-12-01", amount = "9999999999999999999999.100", currency = "PKR"),
+            PaymentEntry(date = "2026-12-01", amount = "0.895", currency = "PKR"),
+            PaymentEntry(date = "2026-12-01", amount = "20.50", currency = "USD"),
+            PaymentEntry(date = "2026-12-02", amount = "2.125", currency = "PKR"),
+            PaymentEntry(date = "2026-11-30", amount = "3.00", currency = "PKR")
+        )
+        val workspace = Workspace(customers = listOf(owner), calls = listOf(call), payments = rows)
+        val daily = paymentSummary(workspace, paid.toLocalDate(), false, at, tz)
+        assertEquals(mapOf("PKR" to "10000000000000000000000.000", "USD" to "20.50"), daily.total)
+        assertEquals(mapOf("PKR" to "0.005"), daily.calls)
+        assertEquals("9999999999999999999999.995", daily.manual["PKR"])
+        assertEquals("10000000000000000000002.125", paymentSummary(workspace, paid.toLocalDate(), true, at, tz).total["PKR"])
+        assertEquals("3.00", paymentSummary(workspace, paid.toLocalDate().minusDays(1), false, at, tz).total["PKR"])
+        assertEquals(listOf("50.25", "1.00"), paymentAmounts(" ۵۰٫۲۵\n\n1.00 "))
+        assertThrows(IllegalArgumentException::class.java) { paymentAmounts("40\nwrong\n20") }
+        assertNull(paymentDate("2026-02-29"))
+    }
+
+    @Test fun roadRowsMatchCountsAndUseTheCorrectEventDates() {
+        val tz = ZoneId.of("UTC")
+        val at = ZonedDateTime.of(2026, 11, 24, 12, 0, 0, 0, tz).toInstant().toEpochMilli()
+        val owner = Customer(displayName = "Customer", phoneNumber = "", createdAt = at - 1_000)
+        val oldCall = CallLog(customerId = owner.id, startedAt = at - 90_000_000L, endedAt = at - 90_000_000L,
+            outcome = Outcome.RESOLVED, outcomeAt = at - 25, dealAmount = "10", dealCurrency = "PKR")
+        val lastCall = oldCall.copy(id = uuid(), startedAt = at - 600, endedAt = at - 100, outcome = Outcome.NO_ANSWER,
+            outcomeAt = null, dealCurrency = null, dealAmount = null)
+        val follow = FollowUp(customerId = owner.id, purpose = "Proposal", dueAt = at + 5000, status = FollowStatus.DONE)
+        val w = Workspace(customers = listOf(owner), calls = listOf(lastCall.copy(id = uuid(), endedAt = at - 500), oldCall, lastCall),
+            followUps = listOf(follow, follow.copy(id = uuid(), status = FollowStatus.DELETED)))
+        val records = journeyRecords(w, ReportPeriod.TODAY, at, tz)
+        assertEquals(listOf(owner), records.new)
+        assertEquals(listOf(lastCall), records.contacted)
+        assertEquals(listOf(follow), records.followUps)
+        assertEquals(listOf(oldCall), records.successful)
+        assertEquals(1, records.count(JourneyStage.SUCCESSFUL))
+        assertTrue(journeyRecords(w, ReportPeriod.LAST_24_HOURS, at, tz).followUps.isEmpty())
+    }
 }

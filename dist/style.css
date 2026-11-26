@@ -226,10 +226,10 @@ dialog::backdrop { background: #251b3c91; }
 .neon-dashboard { display: grid; grid-template-columns: minmax(0,1.18fr) minmax(16.5rem,1fr); gap: 1rem; align-items: start; }
 .hero {
   position: relative; isolation: isolate; overflow: hidden; color: #fff; border-radius: 1.25rem;
-  background: linear-gradient(180deg,#10072f32,transparent 36%), #130b37 url("neon-road.webp") center bottom / 100% auto no-repeat;
   border: 1px solid #7765a85e; box-shadow: 0 14px 42px #08091b63;
 }
-.hero-copy { padding: .72rem .9rem .45rem; }
+.hero-art { position: relative; background: linear-gradient(180deg,#10072f32,transparent 36%), #130b37 url("neon-road.webp") center bottom / 100% auto no-repeat; }
+.hero-copy { padding: .72rem 3.45rem .45rem .9rem; }
 .hero-copy h2 { font-size: clamp(1.18rem,3vw,1.72rem); letter-spacing: -.023em; overflow-wrap: anywhere; }
 .hero-copy p { color: #e0d7fb; font-size: .79rem; margin-top: .3rem; }
 .checkpoint { position: absolute; width: 39%; color: #f7f2ff; --pin: #e6a9ff; --glass: #392954d9; }
@@ -299,7 +299,7 @@ dialog::backdrop { background: #251b3c91; }
   position: relative; aspect-ratio: 1.14; isolation: isolate;
 }
 .hero-period { display: inline-block; }
-.checkpoint-label { min-height: clamp(40px,6vw,67px); }
+.checkpoint-label { min-height: clamp(44px,6vw,67px); }
 .checkpoint-label b { font-size: clamp(1rem,2.4vw,1.5rem); }
 .mission-strip {
   display: block;
@@ -318,7 +318,9 @@ dialog::backdrop { background: #251b3c91; }
 .checkpoint {
   left: var(--card-x); top: var(--stop-y); width: var(--card-width); z-index: 2;
   transform: translateY(calc(-100% - 5px)); transform-origin: var(--tip) bottom;
+  padding: 0; background: transparent; border: 0; text-align: left;
 }
+.checkpoint:hover .checkpoint-label, .checkpoint[aria-expanded="true"] .checkpoint-label { border-color: var(--pin); }
 .checkpoint::after {
   content: ""; position: absolute; left: calc(var(--tip) - 9px); top: calc(100% - 1px);
   width: 18px; height: 9px; background: var(--pin); clip-path: polygon(0 0,100% 0,50% 100%);
@@ -328,20 +330,33 @@ dialog::backdrop { background: #251b3c91; }
   transform: translate(-50%,-50%); z-index: 1; pointer-events: none;
 }
 .road-more { z-index: 3; }
-.hero-animate .checkpoint { animation: marker-pop 700ms cubic-bezier(.2,.7,.25,1) var(--arrive) both; }
+.road-reload {
+  position: absolute; z-index: 4; right: .48rem; top: .45rem; min-width: 44px; justify-content: center;
+  padding: 0; border-radius: 50%; border: 1px solid #bba8f54d; background: #201946db; color: #f2eaff;
+}
+.road-reload span { font: 1.45rem/1 system-ui,sans-serif; }
+.road-reload[aria-disabled="true"] { opacity: .64; cursor: default; }
+.road-detail { background: var(--surface); color: var(--text); border-top: 1px solid var(--line); padding: .6rem .85rem .85rem; }
+.road-detail-head { display: flex; align-items: center; gap: .45rem; }
+.road-detail-head h3 { margin-block: 0; font-size: 1rem; }
+.road-detail-head p { margin-block: .12rem 0; }
+.road-record { display: grid; gap: .18rem; overflow-wrap: anywhere; padding-block: .58rem; }
+.road-record small { color: var(--muted); }
+.road-detail li + li { border-top: 1px solid var(--line); }
+.hero-animate .checkpoint { animation: marker-pop 700ms cubic-bezier(.2,.7,.25,1) calc(var(--arrive) - var(--road-elapsed, 0ms)) both; }
 .checkpoint-resolved { --arrive: 3000ms; }
 .checkpoint-follow { --arrive: 3060ms; }
 .checkpoint-contacted { --arrive: 3120ms; }
 .checkpoint-new { --arrive: 3180ms; }
 @keyframes marker-pop {
-  from { opacity: 0; transform: translateY(calc(-100% - 5px)) scale(.88); }
-  to { opacity: 1; transform: translateY(calc(-100% - 5px)) scale(1); }
+  from { visibility: hidden; opacity: 0; transform: translateY(calc(-100% - 5px)) scale(.88); }
+  to { visibility: visible; opacity: 1; transform: translateY(calc(-100% - 5px)) scale(1); }
 }
-.hero-animate .road-puck { animation-fill-mode: both; animation-timing-function: cubic-bezier(.3,.1,.2,1); }
+.hero-animate .road-puck { animation-fill-mode: both; animation-timing-function: cubic-bezier(.3,.1,.2,1); animation-delay: calc(var(--travel-delay, 0ms) - var(--road-elapsed, 0ms)); }
 .hero-animate .road-puck-resolved { animation-name: travel-success; animation-duration: 700ms; }
-.hero-animate .road-puck-follow { animation-name: travel-follow; animation-duration: 1500ms; animation-delay: 100ms; }
-.hero-animate .road-puck-contacted { animation-name: travel-contact; animation-duration: 2150ms; animation-delay: 200ms; }
-.hero-animate .road-puck-new { animation-name: travel-new; animation-duration: 2700ms; animation-delay: 300ms; }
+.hero-animate .road-puck-follow { animation-name: travel-follow; animation-duration: 1500ms; --travel-delay: 100ms; }
+.hero-animate .road-puck-contacted { animation-name: travel-contact; animation-duration: 2150ms; --travel-delay: 200ms; }
+.hero-animate .road-puck-new { animation-name: travel-new; animation-duration: 2700ms; --travel-delay: 300ms; }
 @keyframes travel-success {
   from { left: 96.2%; top: 95.5%; } 50% { left: 87%; top: 88.6%; } to { left: var(--stop-x); top: var(--stop-y); }
 }
@@ -391,8 +406,19 @@ dialog::backdrop { background: #251b3c91; }
 .photo-editor canvas { display: block; width: min(48vw,170px); height: auto; border-radius: 50%; margin: 0 auto; }
 .photo-editor input[type="range"] { min-height: 34px; accent-color: var(--primary); padding: 0; }
 .today-payment, .today-calls { padding: .25rem .38rem .4rem; }
-.today-payment h2 { color: var(--muted); font-size: .83rem; margin-bottom: .35rem; font-weight: 600; }
+.payment-open { display: flex; width: 100%; min-height: 48px; gap: .7rem; align-items: center; text-align: left; color: var(--text); border: 0; background: transparent; padding: .28rem 0; }
+.payment-open:hover .payment-label { color: var(--primary-dark); }
+.payment-label { display: block; color: var(--muted); font-size: .83rem; margin-bottom: .35rem; font-weight: 600; }
 .today-payment .payment-values strong { font-size: 1.18rem; }
+.payment-ledger-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .55rem; }
+.payment-ledger-head h2 { margin: 0; }
+.payment-ledger > label { margin-top: .75rem; }
+.payment-breakdown { display: grid; gap: .55rem; margin: 0; }
+.payment-ledger .payment-breakdown { margin-block: .9rem; }
+.payment-breakdown > div { padding-bottom: .5rem; border-bottom: 1px solid var(--line); }
+.payment-breakdown dt { font-size: .81rem; color: var(--muted); }
+.payment-breakdown dd { margin: .22rem 0 0; }
+.payment-breakdown dd span { font-size: .82rem; color: var(--muted); }
 .today-calls h2 { font-size: .98rem; margin-bottom: .62rem; }
 .today-chart-row { display: flex; align-items: center; gap: .95rem; }
 .today-donut {

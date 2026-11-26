@@ -1,6 +1,9 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.followup.tracker
 
 import android.animation.ValueAnimator
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -10,16 +13,21 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Phone
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -27,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -38,10 +47,13 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 private val violet = Color(0xffecaaff)
 private val blue = Color(0xffa1c8ff)
@@ -88,8 +100,9 @@ internal fun OverviewGlyph() {
 internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setPeriod: (ReportPeriod) -> Unit,
                          start: () -> Unit, pending: () -> Unit, settings: () -> Unit,
                          showCalls: () -> Unit, showAgenda: () -> Unit, openCustomer: (String) -> Unit,
-                         playIntro: Boolean, onIntroFinished: () -> Unit) {
-    val snapshot = remember(data, period, time) { journeySnapshot(data, period, time, zone()) }
+                         playIntro: Boolean, onIntroFinished: () -> Unit, onRefresh: () -> Unit,
+                         changePaymentPeriod: suspend (PaymentPeriod) -> Unit) {
+    val records = remember(data, period, time) { journeyRecords(data, period, time, zone()) }
     val today = localDay(time)
     val overview = remember(data, time) { todayOverview(data, time, zone()) }
     val calls = overview.total
@@ -98,16 +111,30 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
     val followUps = data.followUps.count { it.customerId in activeCustomers && it.status == FollowStatus.OPEN && localDay(it.dueAt) == today }
 
     val hello = listOf(greeting(time, zone()), data.settings.operatorName).filter { it.isNotBlank() }.joinToString(", ")
-    NeonRoad(snapshot, hello, period, setPeriod, playIntro, onIntroFinished)
-
-    Column(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Deal amount today", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val amounts = overview.deals.amounts.ifEmpty { mapOf("PKR" to "0") }
-        amounts.forEach { (currency, amount) ->
-            Text("$currency $amount", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary)
-        }
+    var stage by rememberSaveable { mutableStateOf<JourneyStage?>(null) }
+    var lastStage by remember { mutableStateOf<JourneyStage?>(null) }
+    var replay by remember { mutableStateOf(false) }
+    val cardFocus = remember { JourneyStage.entries.associateWith { BringIntoViewRequester() } }
+    val detailsFocus = remember { BringIntoViewRequester() }
+    val detailPeek = with(LocalDensity.current) { 150.dp.toPx() }
+    BackHandler(stage != null) { stage = null }
+    LaunchedEffect(stage) {
+        val current = stage
+        if (current != null) {
+            lastStage = current
+            detailsFocus.bringIntoView(Rect(0f, 0f, 1f, detailPeek))
+        } else lastStage?.let { cardFocus.getValue(it).bringIntoView() }
     }
+    val roadShape = RoundedCornerShape(20.dp)
+    Column(Modifier.fillMaxWidth().clip(roadShape).border(1.dp, Color(0xff7563ac).copy(alpha = .58f), roadShape)) {
+        NeonRoad(records, hello, period, setPeriod, stage, { stage = it }, cardFocus,
+            playIntro || replay, onAnimationFinished = { replay = false; onIntroFinished() }, onReload = {
+                if (!replay && !playIntro) { replay = true; onRefresh() }
+            })
+        stage?.let { RoadDetails(data, records, it, period, detailsFocus) { stage = null } }
+    }
+
+    DashboardPayments(data, time, changePaymentPeriod)
     TodayCallChart(overview)
 
     val progress = (calls.toFloat() / data.settings.goal).coerceAtMost(1f)
@@ -240,24 +267,24 @@ private fun routeTo(stop: Int): PathMeasure {
 }
 
 @Composable
-private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeriod, choose: (ReportPeriod) -> Unit,
-                     playIntro: Boolean, onIntroFinished: () -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
+private fun NeonRoad(data: JourneyRecords, greeting: String, period: ReportPeriod, choose: (ReportPeriod) -> Unit,
+                     selected: JourneyStage?, open: (JourneyStage) -> Unit, cardFocus: Map<JourneyStage, BringIntoViewRequester>,
+                     playIntro: Boolean, onAnimationFinished: () -> Unit, onReload: () -> Unit) {
     val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
     val animation = remember(playIntro) { Animatable(if (playIntro && motionEnabled) 0f else 1f) }
     val routes = remember { roadStops.indices.map(::routeTo) }
     LaunchedEffect(playIntro) {
         if (playIntro) {
             if (motionEnabled) animation.animateTo(1f, tween(3900, easing = LinearEasing))
-            onIntroFinished()
+            else delay(350)
+            onAnimationFinished()
         } else animation.snapTo(1f)
     }
-    Box(Modifier.fillMaxWidth().clip(shape).background(Color(0xff110a35))
-        .border(1.dp, Color(0xff7563ac).copy(alpha = .58f), shape)) {
+    Box(Modifier.fillMaxWidth().background(Color(0xff110a35))) {
         Image(painterResource(R.drawable.neon_road), null, Modifier.matchParentSize(), alignment = Alignment.BottomCenter,
             contentScale = ContentScale.FillWidth)
         Column {
-            Column(Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, top = 11.dp, bottom = 7.dp),
+            Column(Modifier.fillMaxWidth().padding(start = 15.dp, end = 58.dp, top = 11.dp, bottom = 7.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("$greeting!", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -267,8 +294,6 @@ private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeri
             BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1.14f)) {
                 val width = maxWidth
                 val height = maxHeight
-                val names = listOf("New", "Contacted", "Follow-up", "Successful")
-                val counts = listOf(data.new, data.contacted, data.followUps, data.deals.successful)
                 val icons = listOf(Icons.Outlined.Person, Icons.Outlined.Phone, Icons.Outlined.DateRange, Icons.Outlined.CheckCircle)
                 val colors = listOf(violet, blue, violet, cyan)
                 val elapsed = animation.value * 3900
@@ -284,8 +309,9 @@ private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeri
                     }
                     val show = FastOutSlowInEasing.transform(((elapsed - 3000f - (3 - index) * 60f) / 700f).coerceIn(0f, 1f))
                     if (show > 0f) {
+                        val stage = JourneyStage.entries[index]
                         val tip = (stop.x - stop.cardX) / stop.width
-                        JourneyPin(names[index], counts[index], icons[index], colors[index], tip,
+                        JourneyPin(stage.title, data.count(stage), icons[index], colors[index], tip, selected == stage, { open(stage) },
                             Modifier.offset(width * stop.cardX, height * stop.y).width(width * stop.width)
                                 .graphicsLayer {
                                     translationY = -size.height - 5.dp.toPx()
@@ -293,7 +319,7 @@ private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeri
                                     alpha = show
                                     scaleX = .88f + .12f * show
                                     scaleY = .88f + .12f * show
-                                })
+                                }.bringIntoViewRequester(cardFocus.getValue(stage)))
                     }
                 }
                 DotMenu("Select journey period", Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 8.dp)
@@ -305,16 +331,23 @@ private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeri
                 }
             }
         }
+        IconButton(onClick = onReload, enabled = !playIntro, modifier = Modifier.align(Alignment.TopEnd)
+            .padding(top = 6.dp, end = 6.dp).clip(CircleShape).background(Color(0xff201946).copy(alpha = .84f)),
+            colors = IconButtonDefaults.iconButtonColors(contentColor = Color(0xfff0e6ff), disabledContentColor = Color(0xffc5b8eb))) {
+            Icon(Icons.Outlined.Refresh, "Reload customer journey")
+        }
     }
 }
 
 @Composable
-private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color, tip: Float, modifier: Modifier) {
+private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color, tip: Float, selected: Boolean,
+                       onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(12.dp)
     Column(modifier) {
         Row(Modifier.fillMaxWidth().clip(shape)
             .background(Brush.verticalGradient(listOf(tint.copy(alpha = .34f), Color(0xff211e48).copy(alpha = .87f))))
-            .border(1.dp, tint.copy(alpha = .65f), shape).padding(horizontal = 8.dp, vertical = 5.dp),
+            .border(1.dp, tint.copy(alpha = if (selected) 1f else .65f), shape)
+            .clickable(role = Role.Button, onClick = onClick).heightIn(min = 44.dp).padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
             Column {
@@ -328,6 +361,49 @@ private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color
             val pointer = Path().apply { moveTo(x - half, 0f); lineTo(x + half, 0f); lineTo(x, size.height); close() }
             drawPath(pointer, tint.copy(alpha = .86f))
         }
+    }
+}
+
+@Composable
+private fun RoadDetails(data: Workspace, records: JourneyRecords, stage: JourneyStage, period: ReportPeriod,
+                        focus: BringIntoViewRequester, close: () -> Unit) {
+    var limit by rememberSaveable(stage, period) { mutableIntStateOf(40) }
+    val customers = remember(data.customers) { data.customers.associateBy { it.id } }
+    val count = records.count(stage)
+    val rows = when (stage) {
+        JourneyStage.NEW -> records.new.take(limit).map {
+            it.displayName to listOf(it.company, it.phoneNumber, dateLabel(it.createdAt))
+        }
+        JourneyStage.FOLLOW_UP -> records.followUps.take(limit).map {
+            (customers[it.customerId]?.displayName ?: "Customer") to
+                listOf(it.purpose, if (it.status == FollowStatus.DONE) "Completed" else "Open", dateLabel(it.dueAt))
+        }
+        JourneyStage.CONTACTED, JourneyStage.SUCCESSFUL ->
+            (if (stage == JourneyStage.CONTACTED) records.contacted else records.successful).take(limit).map {
+                val at = if (stage == JourneyStage.SUCCESSFUL) it.outcomeAt ?: it.endedAt else it.endedAt
+                val amount = it.dealAmount?.let { amount -> "${it.dealCurrency} $amount" }.orEmpty()
+                (customers[it.customerId]?.displayName ?: "Customer") to listOf(it.outcome.title, amount, dateLabel(at), it.summaryNote)
+            }
+    }
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.fillMaxWidth().bringIntoViewRequester(focus), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = close) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to the road") }
+            Column {
+                Text("${stage.title} · $count", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(period.title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (rows.isEmpty()) Text("No records for this period.", style = MaterialTheme.typography.bodySmall)
+        rows.forEach { (name, details) ->
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(details.filter(String::isNotBlank).joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (count > limit) TextButton(onClick = { limit += 40 }) { Text("Show more") }
     }
 }
 

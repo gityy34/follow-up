@@ -1,7 +1,7 @@
 'use strict';
 
 const cachePrefix = `follow-up:${self.registration.scope}:`;
-const cacheName = `${cachePrefix}v8`;
+const cacheName = `${cachePrefix}v9`;
 const assets = ['./', './index.html', './style.css', './app.js', './data.js', './neon-road.webp', './road-puck-cyan.webp', './road-puck-violet.webp', './road-puck-blue.webp', './neon-icons.woff2', './manrope.woff2', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 const assetPaths = new Set(assets.map(asset => new URL(asset, self.registration.scope).pathname));

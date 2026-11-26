@@ -113,7 +113,8 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
     val visible = workspace.customers.filter { it.demo == activeDemo }
     val ids = visible.mapTo(hashSetOf()) { it.id }
     val data = workspace.copy(customers = visible, followUps = workspace.followUps.filter { it.customerId in ids },
-        calls = workspace.calls.filter { it.customerId in ids }, timeline = workspace.timeline.filter { it.customerId in ids })
+        calls = workspace.calls.filter { it.customerId in ids }, timeline = workspace.timeline.filter { it.customerId in ids },
+        payments = if (activeDemo) emptyList() else workspace.payments)
     val customer = workspace.customers.firstOrNull { it.id == customerId }
     val follow = workspace.followUps.firstOrNull { it.id == followId }
     val top = setOf("Journey", "Customers", "Agenda", "Performance")
@@ -282,7 +283,9 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                 when (route) {
                     "Journey" -> NeonJourney(data, activeTime, period, { period = it }, ::startSession,
                         { route = "Pending" }, { route = "Settings" }, { period = ReportPeriod.TODAY; route = "Performance" },
-                        { route = "Agenda" }, ::viewCustomer, !roadIntroPlayed && !needsProfileReview) { roadIntroPlayed = true }
+                        { route = "Agenda" }, ::viewCustomer, !roadIntroPlayed && !needsProfileReview,
+                        onIntroFinished = { roadIntroPlayed = true }, onRefresh = { currentTime = now() },
+                        changePaymentPeriod = repo.settings::setPaymentPeriod)
                     "Reminders" -> {
                         val rows = remember(data, reminderDay, timezone, localDay(activeTime)) { remindersFor(data, reminderDay, activeTime, timezone) }
                         ReminderList(data, rows, reminderDay) { row ->
@@ -343,7 +346,10 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                             }
                         }
                     }
-                    "Performance" -> Performance(data, period, { period = it })
+                    "Performance" -> {
+                        if (!activeDemo) PaymentLedger(data, activeTime, repo)
+                        Performance(data, period) { period = it }
+                    }
                     "Settings" -> SettingsPanel(workspace, model, secureDevice, activeDemo, { activeDemo = it }, snackbar, { photoEditor = true })
                 }
                 }

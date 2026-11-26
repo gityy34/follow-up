@@ -29,7 +29,8 @@ internal fun settingsJson(s: AppSettings) = obj(
     "privateRecents" to s.privateRecents, "goal" to s.goal, "retentionDays" to s.retentionDays,
     "lastExport" to s.lastExport, "exportLabel" to s.exportLabel, "onboardingDone" to s.onboardingDone, "currency" to s.currency,
     "operatorName" to s.operatorName, "displayName" to s.displayName, "profileConfigured" to s.profileConfigured,
-    "profileReview" to s.profileReview, "photo" to s.photo, "photoSource" to s.photoSource, "font" to s.font.name
+    "profileReview" to s.profileReview, "photo" to s.photo, "photoSource" to s.photoSource, "font" to s.font.name,
+    "paymentPeriod" to s.paymentPeriod.name
 )
 
 internal fun settingsFromJson(s: JSONObject) = AppSettings(
@@ -42,7 +43,8 @@ internal fun settingsFromJson(s: JSONObject) = AppSettings(
     s.optString("operatorName").trim().take(60), s.optString("displayName").trim().take(60), s.optBoolean("profileConfigured"),
     s.optInt("profileReview").coerceAtLeast(0), s.optString("photo").takeIf { isProfilePhoto(it) }.orEmpty(),
     s.optString("photoSource").takeIf { isProfilePhoto(it, 350_000) }.orEmpty(),
-    AppFont.entries.firstOrNull { it.name == s.optString("font") } ?: AppFont.DEFAULT
+    AppFont.entries.firstOrNull { it.name == s.optString("font") } ?: AppFont.DEFAULT,
+    PaymentPeriod.entries.firstOrNull { it.name == s.optString("paymentPeriod") } ?: PaymentPeriod.DAILY
 )
 
 internal data class BackupManifest(val formatVersion: Int, val createdAt: Long, val checksum: String,
@@ -71,7 +73,7 @@ internal object BackupCodec {
         val nonce = ByteArray(nonceSize).also(random::nextBytes)
         val data = encode(workspace).toString()
         val manifest = obj("formatVersion" to 2, "createdAt" to now(), "checksum" to digest(data.toByteArray()),
-            "encrypted" to true, "appVersion" to "1.5.0")
+            "encrypted" to true, "appVersion" to "1.6.0")
         val payload = obj("manifest" to manifest, "data" to data).toString().toByteArray()
         require(payload.size <= maxSize) { "This backup exceeds this version’s file size limit." }
         return try { magic + salt + nonce + cipher(Cipher.ENCRYPT_MODE, passphrase, salt, nonce).doFinal(payload) }
@@ -131,7 +133,9 @@ internal object BackupCodec {
             "reflection" to c.reflection, "followUpId" to c.followUpId, "createdAt" to c.createdAt,
             "dealAmount" to c.dealAmount, "dealCurrency" to c.dealCurrency, "outcomeAt" to c.outcomeAt) }),
         "timeline" to JSONArray(w.timeline.map { e -> obj("id" to e.id, "customerId" to e.customerId, "eventType" to e.eventType,
-            "referenceId" to e.referenceId, "eventTime" to e.eventTime, "displayPayload" to e.displayPayload) })
+            "referenceId" to e.referenceId, "eventTime" to e.eventTime, "displayPayload" to e.displayPayload) }),
+        "payments" to JSONArray(w.payments.map { row -> obj("id" to row.id, "date" to row.date, "amount" to row.amount,
+            "currency" to row.currency, "createdAt" to row.createdAt, "updatedAt" to row.updatedAt) })
     )
 
     private fun decode(data: JSONObject): Workspace {
@@ -174,6 +178,14 @@ internal object BackupCodec {
                 .also { require(it.customerId in customerIds && it.eventType.isNotBlank()) }
         }
         require(calls.map { it.id }.toSet().size == calls.size && events.map { it.id }.toSet().size == events.size)
-        return Workspace(customers, follows, calls, events, settingsFromJson(data.getJSONObject("settings")))
+        val payments = if (!data.has("payments")) emptyList() else data.getJSONArray("payments").items { row ->
+            PaymentEntry(id(row.getString("id")), row.getString("date"), row.getString("amount"), row.getString("currency"),
+                row.getLong("createdAt"), row.getLong("updatedAt")).also {
+                require(paymentDate(it.date) != null && validCurrency(it.currency) && normalizeAmount(it.amount) == it.amount &&
+                    it.createdAt > 0 && it.updatedAt >= it.createdAt) { "Invalid payment entry." }
+            }
+        }
+        require(payments.mapTo(hashSetOf()) { it.id }.size == payments.size) { "Duplicate payment IDs." }
+        return Workspace(customers, follows, calls, events, settingsFromJson(data.getJSONObject("settings")), payments)
     }
 }

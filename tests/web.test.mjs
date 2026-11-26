@@ -163,3 +163,61 @@ test('photo crop and today’s summary use stable crop bounds and separate units
   const restored = await decrypt(await encrypt(w,'profile editor backup'),'profile editor backup');
   assert.equal(restored.settings.photoSource,'/9j/AQ==');
 });
+
+test('payment batches, edits and date totals preserve exact values and currency', async () => {
+  const { savePayments, paymentSummary, validate, visible } = await import('../dist/data.js');
+  const w = workspace();
+  const at = new Date('2026-12-01T00:10:00').getTime();
+  const c = customer({ displayName:'Example' },at - 3600000);
+  w.customers.push(c);
+  w.calls.push({id:crypto.randomUUID(),customerId:c.id,startedAt:at-3600000,endedAt:at-1800000,
+    createdAt:at,outcome:'RESOLVED',outcomeAt:at,dealAmount:'0.005',dealCurrency:'PKR',issueCategory:'',summaryNote:'',reflection:''});
+  assert.equal(savePayments(w,'2026-12-01','9999999999999999999999.100\n\n۰٫۸۹۵','PKR','',at),2);
+  savePayments(w,'2026-12-01','20.50','USD','',at);
+  savePayments(w,'2026-12-02','2.125','PKR','',at);
+  savePayments(w,'2026-11-30','3.00','PKR','',at);
+  assert.throws(() => savePayments(w,'2026-12-01','30\nwrong','PKR','',at),/line 2/);
+  assert.throws(() => savePayments(w,'2026-02-29','10','PKR'),/valid date/);
+  assert.equal(w.payments.length,5);
+  const day = paymentSummary(w,'2026-12-01',false,at);
+  assert.deepEqual(day.total,{PKR:'10000000000000000000000.000',USD:'20.50'});
+  assert.deepEqual(day.calls,{PKR:'0.005'});
+  assert.equal(day.manual.PKR,'9999999999999999999999.995');
+  assert.equal(paymentSummary(w,'2026-12-01',true,at).total.PKR,'10000000000000000000002.125');
+  assert.equal(paymentSummary(w,'2026-11-30',true,at).total.PKR,'3.00');
+  const usd = w.payments.find(row => row.currency === 'USD');
+  savePayments(w,'2026-12-02','25.025','PKR',usd.id,at+1);
+  assert.equal(usd.currency,'USD');
+  assert.equal(paymentSummary(w,'2026-12-01',false,at).total.USD,undefined);
+  assert.equal(paymentSummary(w,'2026-12-02',false,at).total.USD,'25.025');
+  assert.equal(visible(w,true).payments.length,0);
+  w.settings.paymentPeriod = 'MONTHLY';
+  assert.deepEqual(await decrypt(await encrypt(w,'payments backup round trip'),'payments backup round trip'),w);
+  assert.throws(() => validate({ ...w,payments:[usd,usd] }),/invalid or duplicated/);
+  const older = structuredClone(w);
+  delete older.payments;
+  delete older.settings.paymentPeriod;
+  assert.deepEqual(validate(older).payments,[]);
+  assert.equal(validate(older).settings.paymentPeriod,'DAILY');
+});
+
+test('all journey detail lists match their marker counts', async () => {
+  const { journeyRecords, journeySnapshot } = await import('../dist/data.js');
+  const at = new Date('2026-11-25T12:00:00').getTime();
+  const w = workspace();
+  const c = customer({displayName:'Example'},at-60);
+  w.customers.push(c);
+  const base = {customerId:c.id,outcome:'NO_ANSWER',endedAt:at-30};
+  const old = {...base,endedAt:at-90000000,outcome:'RESOLVED',outcomeAt:at-10,dealAmount:'5.50',dealCurrency:'PKR'};
+  w.calls.push({...base,endedAt:at-100},old,base);
+  const due = followUp({customerId:c.id,purpose:'Quote review',dueAt:at+70000});
+  w.followUps.push(due,{...due,status:'DELETED'});
+  const rows = journeyRecords(w,'today',at);
+  assert.deepEqual(rows.new,[c]);
+  assert.deepEqual(rows.contacted,[base]);
+  assert.deepEqual(rows.follow,[due]);
+  assert.deepEqual(rows.resolved,[old]);
+  const count = journeySnapshot(w,'today',at);
+  assert.deepEqual(count,{newCustomers:1,contacted:1,followUps:1,deals:{successful:1,amounts:{PKR:'5.50'}}});
+  assert.deepEqual(journeyRecords(w,'24h',at).follow,[]);
+});

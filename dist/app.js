@@ -2,7 +2,8 @@ import {
   stages, outcomes, priorities, reminders, categories, uuid, timezone, workspace, customer, followUp,
   event, day, dateText, dateField, addDays, orderFollow, dayGroup, load, save, visible, report, encrypt, decrypt, validPhone,
   periods, currencyCodes, entryOutcomes, pendingOutcomes, stageForOutcome, withOutcome, outcomeLabel, completeLinkedFollowUp, resolvePending,
-  greeting, journeySnapshot, remindersFor, reminderDays, profileReview, fonts, validPhoto, profileCrop, todayOverview
+  greeting, journeyRecords, remindersFor, reminderDays, profileReview, fonts, validPhoto, profileCrop, todayOverview,
+  paymentSummary, paymentPeriods, validPaymentDate, savePayments
 } from './data.js';
 
 const view = document.querySelector('#view');
@@ -18,6 +19,8 @@ const titles = {
 const nav = [['journey','Overview','grid_view'],['customers','Contacts','badge'],['agenda','Schedule','event_available'],['performance','Insights','monitoring']];
 const purposes = ['Discuss proposal','Confirm interest','Share product info','Address concern / issue','Agree next step','Other'];
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
+const motionMedia = matchMedia('(prefers-reduced-motion: reduce)');
+const roadStages = { new:'New', contacted:'Contacted', follow:'Follow-up', resolved:'Successful' };
 let initializationError = false;
 let data;
 try { data = load(localStorage); }
@@ -40,6 +43,12 @@ let initialProfile = false;
 let profileChoice = '';
 let photoDraft;
 let roadIntroPlayed = false;
+let roadStage = '';
+let roadBusy = false;
+let roadReplay = false;
+let roadAnimationStart = 0;
+let paymentDate = '';
+let ledgerDate = '';
 let pendingDraft;
 let limit = 40;
 const filters = { q: '', status: 'OPEN', range: 'All dates', date: day(), priority: 'ANY', archive: 'active' };
@@ -98,6 +107,7 @@ function changeStatus(id, status) {
 function go(next, id = '', replace = false) {
   page = next;
   selected = id;
+  roadStage = '';
   limit = 40;
   if (next !== 'detail') tab = 'Overview';
   history[replace ? 'replaceState' : 'pushState']({ page: next, id }, '', '#' + next);
@@ -108,6 +118,33 @@ function handleBack() {
   if (page === 'wizard' && wizard?.step > 0) { wizard.step--; render(); return; }
   if (history.state?.page !== 'journey') history.back();
   else go('journey','',true);
+}
+function showRoadStage(stage) {
+  if (!Object.hasOwn(roadStages,stage) || roadStage === stage) return;
+  history[roadStage ? 'replaceState' : 'pushState']({page:'journey', road:stage},'','#journey');
+  roadStage = stage;
+  limit = 40;
+  render();
+  focusRoadDetails();
+}
+
+function focusRoadDetails() {
+  query('#road-detail-heading')?.focus({preventScroll:true});
+  query('#road-detail')?.scrollIntoView?.({block:'start'});
+}
+
+function finishRoadMotion() {
+  roadBusy = false;
+  query('.road-reload')?.removeAttribute('aria-disabled');
+}
+
+function reloadRoad() {
+  if (roadBusy) return;
+  data = load(localStorage);
+  initializationError = false;
+  roadReplay = true;
+  render();
+  query('.road-reload')?.focus({preventScroll:true});
 }
 function startWizard(customerId = '', previous = null, sourceCall = '', returnPage = page) {
   const current = visible(data,demo).customers.filter(c => !c.archived);
@@ -165,37 +202,45 @@ function render() {
 }
 
 function journey(w, time) {
-  const snapshot = journeySnapshot(w,period,time);
+  const records = journeyRecords(w,period,time);
   const overview = todayOverview(w,time);
   const active = new Set(w.customers.filter(c => !c.archived).map(c => c.id));
   const due = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN' && day(f.dueAt) === day(time)).length;
   const review = w.calls.filter(c => day(c.endedAt) === day(time) && c.endedAt <= time && c.outcome === 'ISSUE').length;
   const pending = w.calls.filter(c => c.outcome === 'PENDING').length;
-  const checkpoint = (text,count,glyph,place,color,x,y,left,width) => {
+  const checkpoint = (glyph,place,color,x,y,left,width) => {
     const anchor = `--stop-x:${x}%;--stop-y:${y}%;--card-x:${left}%;--card-width:${width}%;--tip:${(x-left)/width*100}%`;
-    return `<div class="checkpoint checkpoint-${place}" style="${anchor}">
-      <div class="checkpoint-label">${icon(glyph)}<div><span>${text}</span><b>${count}</b></div></div></div>
+    return `<button type="button" class="checkpoint checkpoint-${place}" style="${anchor}"
+      data-action="road-stage" data-id="${place}" aria-expanded="${roadStage === place}"${roadStage === place ? ' aria-controls="road-detail"' : ''}>
+      <span class="checkpoint-label">${icon(glyph)}<span>${roadStages[place]}<b>${records[place].length}</b></span></span></button>
       <img class="road-puck road-puck-${place}" style="--stop-x:${x}%;--stop-y:${y}%" alt="" src="road-puck-${color}.webp">`;
   };
-  const amounts = Object.entries(overview.deals.amounts);
   const hello = [greeting(time),w.settings.operatorName].filter(Boolean).join(', ');
-  const animate = !roadIntroPlayed && w.settings.profileReview >= profileReview;
-  if (animate) roadIntroPlayed = true;
+  const play = roadReplay || !roadIntroPlayed && w.settings.profileReview >= profileReview;
+  roadReplay = false;
+  if (play) roadIntroPlayed = true;
+  if (play) {
+    roadAnimationStart = window.performance.now();
+    roadBusy = true;
+    setTimeout(finishRoadMotion,motionMedia.matches ? 350 : 3900);
+  }
+  const animate = roadBusy && !motionMedia.matches;
+  const animationOffset = animate ? ` style="--road-elapsed:${Math.max(0,window.performance.now()-roadAnimationStart)}ms"` : '';
   const next = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN').sort(orderFollow)[0];
   const tiles = [['Call log',overview.total,'call','today-calls'],['Follow-ups',due,'event_available','today-agenda'],['Review',review,'flag','today-calls']];
   const progress = Math.min(100,100 * overview.total / w.settings.goal);
   return `<div class="neon-dashboard"><section class="hero" aria-label="Customer journey, ${periods[period]}">
-    <div class="hero-copy"><h2>${escape(hello)}!</h2><p class="hero-period">${periods[period]}</p></div>
-    <div class="hero-map${animate ? ' hero-animate' : ''}">
-      ${checkpoint('New',snapshot.newCustomers,'person_add','new','violet',15.8,25.5,3.5,37)}
-      ${checkpoint('Contacted',snapshot.contacted,'call','contacted','blue',81.9,42.6,55,42)}
-      ${checkpoint('Follow-up',snapshot.followUps,'calendar_month','follow','violet',15.1,61.5,3.2,40)}
-      ${checkpoint('Successful',snapshot.deals.successful,'check_circle','resolved','cyan',73.4,80.6,55,42)}
+    <div class="hero-art"><div class="hero-copy"><h2>${escape(hello)}!</h2><p class="hero-period">${periods[period]}</p></div>
+    <button type="button" class="icon-button road-reload" data-action="reload-road" aria-label="Reload customer journey"${roadBusy ? ' aria-disabled="true"' : ''}><span aria-hidden="true">↻</span></button>
+    <div class="hero-map${animate ? ' hero-animate' : ''}"${animationOffset}>
+      ${checkpoint('person_add','new','violet',15.8,25.5,3.5,37)}
+      ${checkpoint('call','contacted','blue',81.9,42.6,55,42)}
+      ${checkpoint('calendar_month','follow','violet',15.1,61.5,3.2,40)}
+      ${checkpoint('check_circle','resolved','cyan',73.4,80.6,55,42)}
       ${iconButton('more_vert','Select journey period','journey-period','road-more')}
-    </div></section>
+    </div></div>${roadStage ? roadDetails(records[roadStage],w) : ''}</section>
     <div class="stack neon-summary">
-      <section class="today-payment"><h2>Deal amount today</h2><div class="payment-values">${amounts.length ? amounts.map(([currency,amount]) =>
-        `<strong>${escape(currency)} ${escape(amount)}</strong>`).join('') : '<strong>PKR 0</strong>'}</div></section>
+      ${dashboardPayments(w,time)}
       ${todayCallChart(overview)}
       <section class="mission-strip">
         <div class="strip-mission"><span class="mission-ring" style="--progress:${progress}%" aria-hidden="true"></span>
@@ -212,6 +257,23 @@ function journey(w, time) {
           row(e.eventType,(owner(e.customerId)?.displayName ?? '') + ' · ' + dateText(e.eventTime),'open-customer',e.customerId)),
           'Saved activity will appear here.')}</details>
     </div></div>`;
+}
+
+function roadDetails(rows,w) {
+  const owners = new Map(w.customers.map(customer => [customer.id,customer.displayName]));
+  const records = rows.slice(0,limit).map(row => {
+    if (roadStage === 'new') return [row.displayName,[row.company,row.phoneNumber,dateText(row.createdAt)]];
+    const name = owners.get(row.customerId) ?? 'Customer';
+    if (roadStage === 'follow') return [name,[row.purpose,row.status === 'DONE' ? 'Completed' : 'Open',dateText(row.dueAt)]];
+    const at = roadStage === 'resolved' ? row.outcomeAt ?? row.endedAt : row.endedAt;
+    return [name,[outcomeLabel(row),dateText(at),row.summaryNote]];
+  });
+  return `<section class="road-detail" id="road-detail" aria-labelledby="road-detail-heading">
+    <div class="road-detail-head">${iconButton('arrow_back','Back to the road','close-road-stage')}
+      <div><h3 id="road-detail-heading" tabindex="-1">${roadStages[roadStage]} · ${rows.length}</h3><p class="note">${periods[period]}</p></div></div>
+    ${list(records.map(([name,details]) => `<div class="road-record"><strong>${escape(name)}</strong>
+      <small>${details.filter(Boolean).map(escape).join(' · ')}</small></div>`),'No records for this period.')}
+    ${rows.length > limit ? button('Show more','more') : ''}</section>`;
 }
 
 function todayCallChart(overview) {
@@ -404,10 +466,61 @@ function dealSummary(totals) {
   return `<p>${totals.successful} successful deals</p>${items.length ? items.map(([currency,amount]) =>
     `<p class="deal-value">${escape(currency)} ${escape(amount)}</p>`).join('') : '<p class="note">No deal amounts recorded.</p>'}`;
 }
+const paymentDayLabel = date => new Intl.DateTimeFormat('en',{dateStyle:'medium',timeZone:'UTC'}).format(new Date(date+'T00:00:00Z'));
+const paymentMonthLabel = date => new Intl.DateTimeFormat('en',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(date+'T00:00:00Z'));
+const paymentValues = (amounts,currency = '') => {
+  const entries = Object.entries(amounts).sort(([a],[b]) => a.localeCompare(b));
+  if (!entries.length && currency) entries.push([currency,'0']);
+  return entries.length ? entries.map(([code,amount]) => `<strong>${escape(code)} ${escape(amount)}</strong>`).join('') : '<span>None</span>';
+};
+const paymentBreakdown = (summary,currency) => `<dl class="payment-breakdown">
+  ${[['Total',summary.total,currency],['Manual entries',summary.manual],['Successful calls',summary.calls]].map(([label,amounts,zero]) =>
+    `<div><dt>${label}</dt><dd class="payment-values">${paymentValues(amounts,zero)}</dd></div>`).join('')}</dl>`;
+const paymentDateField = (label,name,value) => input(label,name,value,'type="date" min="0001-01-01" max="9999-12-31" required');
+function dashboardPayments(w,time,dialog = false) {
+  const date = paymentDate || day(time);
+  const monthly = !paymentDate && w.settings.paymentPeriod === 'MONTHLY';
+  const summary = paymentSummary(w,date,monthly,time);
+  const label = paymentDate ? paymentDayLabel(date) : monthly ? paymentMonthLabel(date) : 'today';
+  if (dialog) return `<div class="periods" role="group" aria-label="Dashboard payment period">
+      ${Object.entries(paymentPeriods).map(([id,name]) => `<button type="button" class="outline" data-action="payment-period" data-id="${id}"
+        aria-pressed="${!paymentDate && w.settings.paymentPeriod === id}">${name}</button>`).join('')}</div>
+    ${paymentDateField('Check a date','dashboardPaymentDate',paymentDate)}
+    <h3>${label === 'today' ? 'Today' : escape(label)}</h3>
+    ${paymentBreakdown(summary,w.settings.currency)}${button('Close','close-modal')}`;
+  return `<section class="today-payment"><button type="button" class="payment-open" data-action="dashboard-payments">
+    <span class="grow"><span class="payment-label">Deal amount ${label === 'today' ? 'today' : '· '+escape(label)}</span>
+    <span class="payment-values">${paymentValues(summary.total,w.settings.currency)}</span></span><span aria-hidden="true">›</span></button></section>`;
+}
+function openDashboardPayments() {
+  openModal('Deal amounts',dashboardPayments(visible(data,demo),Date.now(),true));
+}
+function paymentLedger(w) {
+  if (demo) return '';
+  const date = ledgerDate || day();
+  const summary = paymentSummary(w,date);
+  const rows = w.payments.filter(row => row.date === date).sort((a,b) => b.createdAt-a.createdAt);
+  return `<section class="card payment-ledger"><div class="payment-ledger-head"><h2>Payments by date</h2>${button('Add amount','add-payment','','button')}</div>
+    ${paymentDateField('Date','ledgerPaymentDate',date)}${paymentBreakdown(summary,w.settings.currency)}
+    ${list(rows.slice(0,limit).map(item => row(`${item.currency} ${item.amount}`,'Manual entry','edit-payment',item.id,'Edit')),
+    'No manual entries for this date.')}${rows.length > limit ? button('Show more','more') : ''}</section>`;
+}
+function openPaymentEditor(id = '') {
+  const entry = id ? data.payments.find(row => row.id === id) : null;
+  if (id && !entry) throw new Error('This payment is unavailable.');
+  const currency = entry?.currency ?? data.settings.currency;
+  openModal(entry ? 'Edit amount' : 'Add amounts',`<form class="stack" data-form="payment">
+    <input type="hidden" name="id" value="${escape(id)}"><input type="hidden" name="currency" value="${escape(currency)}">
+    ${paymentDateField('Date','date',entry?.date ?? (ledgerDate || day()))}
+    ${entry ? input(`Amount (${currency})`,'amount',entry.amount,'inputmode="decimal" required') :
+      `<label>Amounts (${escape(currency)})<textarea name="amount" rows="3" required aria-describedby="payment-hint"></textarea></label>
+        <p class="note" id="payment-hint">Enter one amount per line.</p>`}
+    <p class="error" role="alert" data-error></p><div class="actions"><button class="button" type="submit">Save</button>${button('Cancel','close-modal')}</div></form>`);
+}
 function performance(w) {
   const r = report(w,period);
   const totalIssues = r.issues.reduce((sum, [,n]) => sum+n,0);
-  return `<div class="columns"><div class="stack"><section class="card">${periodPicker()}
+  return `<div class="columns"><div class="stack">${paymentLedger(w)}<section class="card">${periodPicker()}
     <h2>Your Performance</h2><div class="stats">${metric('Calls',r.calls,'☎')}${metric('Follow-ups',r.scheduled,'↗')}${metric('Resolved',r.counts.RESOLVED,'✓')}</div>
     <p>${r.success}% success rate · ${r.completion}% follow-up completion rate</p>
     <p class="note">Best calling hour · ${r.best == null ? 'Need successful calls' : String(r.best).padStart(2,'0')+':00'}</p>
@@ -652,6 +765,20 @@ function mutateFollow(f) {
 }
 const actions = {
   back: handleBack,
+  'road-stage': showRoadStage,
+  'close-road-stage': () => { if (roadStage) history.back(); },
+  'reload-road': reloadRoad,
+  'dashboard-payments': openDashboardPayments,
+  'payment-period': id => {
+    if (!Object.hasOwn(paymentPeriods,id)) return;
+    if (data.settings.paymentPeriod !== id) write(next => { next.settings.paymentPeriod = id; });
+    paymentDate = '';
+    render();
+    openDashboardPayments();
+    modal.querySelector(`[data-id="${id}"]`)?.focus();
+  },
+  'add-payment': () => openPaymentEditor(),
+  'edit-payment': openPaymentEditor,
   'edit-profile': () => openProfile(false),
   'setup-new': () => openProfile(true,'new'),
   'setup-existing': () => openProfile(true,'existing'),
@@ -760,6 +887,15 @@ const actions = {
 };
 
 const forms = {
+  payment: values => {
+    let count;
+    write(next => { count = savePayments(next,values.date,values.amount,values.currency,values.id); });
+    ledgerDate = values.date;
+    limit = 40;
+    modal.close();
+    render();
+    tell(values.id ? 'Amount updated.' : `${count} ${count === 1 ? 'amount' : 'amounts'} saved.`);
+  },
   profile: values => {
     const name = values.operatorName.trim().slice(0,60);
     if (initialProfile && !name) throw new Error('Enter your name or choose Not now.');
@@ -835,7 +971,7 @@ const forms = {
     }
     pendingRestore = verified;
     resetPassword();
-    openModal('Replace Current Data?',`<p>Verified ${verified.customers.length} customers, ${verified.followUps.length} follow-ups, and ${verified.calls.length} calls.</p>
+    openModal('Replace Current Data?',`<p>Verified ${verified.customers.length} customers, ${verified.followUps.length} follow-ups, ${verified.calls.length} calls, and ${verified.payments.length} payments.</p>
       <p>Restoring replaces the records in this browser.</p><div class="actions">${button('Cancel','close-modal')}
       ${button('Replace Data','confirm-restore','','button')}</div>`);
   }
@@ -880,6 +1016,20 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   const el = e.target;
   try {
+    if (el.name === 'ledgerPaymentDate' && validPaymentDate(el.value)) {
+      ledgerDate = el.value;
+      limit = 40;
+      render();
+      query('[name="ledgerPaymentDate"]')?.focus({preventScroll:true});
+      return;
+    }
+    if (el.name === 'dashboardPaymentDate' && (el.value === '' || validPaymentDate(el.value))) {
+      paymentDate = el.value;
+      render();
+      openDashboardPayments();
+      modal.querySelector('[name="dashboardPaymentDate"]')?.focus({preventScroll:true});
+      return;
+    }
     if (el.id === 'profile-photo-file') {
       const file = el.files?.[0];
       if (file) await loadProfileFile(file);
@@ -915,14 +1065,15 @@ document.addEventListener('submit', async e => {
   if (!name) return;
   e.preventDefault();
   const submit = e.submitter;
-  if (submit?.disabled) return;
+  if (!e.target.isConnected || e.target.dataset.saving || submit?.disabled) return;
+  e.target.dataset.saving = 'true';
   if (submit) submit.disabled=true;
   try { await forms[name](Object.fromEntries(new FormData(e.target))); }
   catch (error) {
     const msg = e.target.querySelector('[data-error]');
     if (msg) msg.textContent = error.message || 'The operation could not be completed.';
     else tell(error.message || 'The change could not be saved.');
-  } finally { if (submit) submit.disabled=false; }
+  } finally { delete e.target.dataset.saving; if (submit) submit.disabled=false; }
 });
 modal.addEventListener('cancel', e => {
   if (initialProfile) { e.preventDefault(); actions['skip-profile'](); }
@@ -930,7 +1081,14 @@ modal.addEventListener('cancel', e => {
 modal.addEventListener('close', () => { initialProfile = false; pendingRestore = null; pendingSafety = null; photoDraft?.image?.close(); photoDraft = null; resetPassword(); });
 window.addEventListener('popstate', e => {
   const next = e.state?.page;
-  if (next && Object.hasOwn(titles,next)) { page=next; selected=e.state.id || ''; limit=40; render(); }
+  if (next && Object.hasOwn(titles,next)) {
+    const previous = roadStage;
+    page=next; selected=e.state.id || ''; limit=40;
+    roadStage = next === 'journey' && Object.hasOwn(roadStages,e.state.road) ? e.state.road : '';
+    render();
+    if (roadStage) focusRoadDetails();
+    else if (previous && next === 'journey') query(`.checkpoint-${previous}`)?.focus();
+  }
   else go('journey','',true);
 });
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt=e; });
@@ -939,7 +1097,7 @@ window.addEventListener('resize', () => { drawTrend(visible(data,demo)); });
 themeMedia.addEventListener('change',render);
 setInterval(updateTimer,1000);
 const refreshDashboard = () => {
-  if (page === 'journey' && !modal.open && !query('.overflow-menu[open], .neon-activity[open]')) render();
+  if (page === 'journey' && !roadBusy && !modal.open && !query('.overflow-menu[open], .neon-activity[open]')) render();
 };
 setInterval(refreshDashboard,60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDashboard(); });

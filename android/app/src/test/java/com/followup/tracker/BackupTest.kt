@@ -33,7 +33,10 @@ class BackupTest {
         val pending = CallLog(customerId = customer.id, startedAt = savedAt - 100, endedAt = savedAt - 10, outcome = Outcome.PENDING)
         val resolved = pending.copy(id = uuid(), outcome = Outcome.RESOLVED, dealAmount = "9999999999999999999999.123456789",
             dealCurrency = "PKR", outcomeAt = savedAt)
-        val workspace = state.copy(calls = listOf(pending, resolved), settings = state.settings.copy(currency = "USD", operatorName = "Uzair", displayName = "My work", profileConfigured = true))
+        val workspace = state.copy(calls = listOf(pending, resolved),
+            settings = state.settings.copy(currency = "USD", operatorName = "Uzair", displayName = "My work", profileConfigured = true,
+                paymentPeriod = PaymentPeriod.MONTHLY),
+            payments = listOf(PaymentEntry(date = "2026-11-01", amount = "100.0001", currency = "USD")))
         assertEquals(workspace, BackupCodec.import(BackupCodec.export(workspace, pass).inputStream(), pass))
     }
     @Test fun profileReviewFontAndThumbnailRoundTrip() {
@@ -46,6 +49,7 @@ class BackupTest {
         assertEquals("Uzair", existing.operatorName)
         assertEquals(0, existing.profileReview)
         assertEquals(AppFont.DEFAULT, existing.font)
+        assertEquals(PaymentPeriod.DAILY, existing.paymentPeriod)
         assertFalse(isProfilePhoto("/9j/<svg>"))
         assertFalse(isProfilePhoto("/9j/" + "A".repeat(90000)))
     }

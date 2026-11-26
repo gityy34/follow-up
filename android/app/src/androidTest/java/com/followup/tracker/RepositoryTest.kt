@@ -34,6 +34,11 @@ class RepositoryTest {
             try { repo.resolvePending(pending.id, Outcome.CANCELLED, null, null); fail("A resolved pending call is final") }
             catch (_: IllegalStateException) {}
             repo.changeFollowStatus(follow.id, FollowStatus.OPEN)
+            repo.addPayments("2026-11-01", "10.50\n200.25", "PKR")
+            try { repo.addPayments("2026-11-01", "30\nwrong", "PKR"); fail("Invalid batch must be rejected") }
+            catch (_: IllegalArgumentException) {}
+            val payment = repo.dao.allPayments().single { it.amount == "10.50" }
+            repo.editPayment(payment.id, "2026-11-02", "5.25")
             val snapshot = repo.snapshot()
             val rollback = snapshot.copy(calls = snapshot.calls + snapshot.calls.first())
             try { repo.replace(rollback); fail("Duplicate insert must fail") } catch (_: android.database.sqlite.SQLiteConstraintException) {}
@@ -45,6 +50,12 @@ class RepositoryTest {
             assertEquals(Outcome.entries.size, recovered.calls.size)
             assertEquals("200.50", recovered.calls.single { it.id == pending.id }.dealAmount)
             assertEquals("USD", recovered.calls.single { it.id == pending.id }.dealCurrency)
+            assertEquals(2, recovered.payments.size)
+            val edited = recovered.payments.single { it.id == payment.id }
+            assertEquals("2026-11-02", edited.date)
+            assertEquals("5.25", edited.amount)
+            assertEquals(payment.currency, edited.currency)
+            assertEquals(payment.createdAt, edited.createdAt)
             assertEquals(snapshot.timeline.toSet(), recovered.timeline.toSet())
             assertEquals(FollowStatus.OPEN, recovered.followUps.first { it.id == follow.id }.status)
         } finally {

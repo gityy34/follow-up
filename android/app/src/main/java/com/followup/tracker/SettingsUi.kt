@@ -86,7 +86,7 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
                         }
                     }
                     repo.settings.set(snapshot.settings)
-                    "Backup saved and verified · ${snapshot.customers.size} customers, ${snapshot.followUps.size} follow-ups, ${snapshot.calls.size} calls."
+                    "Backup saved and verified · ${snapshot.customers.size} customers, ${snapshot.followUps.size} follow-ups, ${snapshot.calls.size} calls, ${snapshot.payments.size} payments."
                 } finally { secret.fill('\u0000') }
             }
         } else {
@@ -215,7 +215,7 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
         AlertDialog(onDismissRequest = { if (!busy) close() }, title = { Text(backupDialog) }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (verified != null) {
-                    Text("Verified ${verified.customers.size} customers, ${verified.followUps.size} follow-ups and ${verified.calls.size} call records.")
+                    Text("Verified ${verified.customers.size} customers, ${verified.followUps.size} follow-ups, ${verified.calls.size} calls, and ${verified.payments.size} payments.")
                     Text("Restore will replace current records and settings after making an encrypted safety backup.")
                 } else {
                     Text(if (exporting) "Choose a passphrase with at least 10 characters. You will need it to restore." else "Enter the passphrase to verify this backup before restoring.")
@@ -247,7 +247,7 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
                                 repo.replace(verified.copy(settings = verified.settings.copy(appLock = verified.settings.appLock && deviceSecure())))
                                 repo.applyRestoreSettings()
                                 model.reminders.request()
-                                "Restored ${verified.customers.size} customers, ${verified.followUps.size} follow-ups and ${verified.calls.size} calls."
+                                "Restored ${verified.customers.size} customers, ${verified.followUps.size} follow-ups, ${verified.calls.size} calls, and ${verified.payments.size} payments."
                             } finally { secret.fill('\u0000') }
                         }
                     }
