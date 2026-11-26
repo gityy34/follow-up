@@ -50,6 +50,8 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
     var customerId by rememberSaveable { mutableStateOf("") }
     var followId by rememberSaveable { mutableStateOf("") }
     var backTo by rememberSaveable { mutableStateOf("Journey") }
+    var pendingId by rememberSaveable { mutableStateOf("") }
+    var period by rememberSaveable { mutableStateOf(ReportPeriod.TODAY) }
     var callParent by rememberSaveable { mutableStateOf("Customer Detail") }
     var followParent by rememberSaveable { mutableStateOf("Agenda") }
     var editingParent by rememberSaveable { mutableStateOf("Customers") }
@@ -73,7 +75,8 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
             "Post-Call Reflection" -> callParent
             "Follow-up Detail" -> followParent
             "Customer Form" -> editingParent
-            "Settings" -> "Journey"
+            "Settings", "Pending" -> "Journey"
+            "Update Pending Call" -> "Pending"
             in top -> "Journey"
             else -> backTo
         }
@@ -162,7 +165,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                     "Journey" -> Mission(data, { route = "Agenda" }, { wizard() }, {
                         if (visible.any { !it.archived }) { backTo = "Journey"; route = "Start Call Session" }
                         else { customerId = ""; backTo = "Journey"; editingParent = "Journey"; route = "Customer Form" }
-                    }, ::viewCustomer)
+                    }, ::viewCustomer, { route = "Pending" }, period, { period = it })
                     "Agenda" -> Agenda(data, { wizard() }, { row ->
                         backTo = "Agenda"; followParent = "Agenda"; customerId = row.customerId; followId = row.id; route = "Follow-up Detail"
                     })
@@ -189,7 +192,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                     } }
                     "Start Call Session" -> Customers(data.copy(customers = visible.filterNot { it.archived }), {}, { call(it) }, true)
                     "Post-Call Reflection" -> customer?.let { record ->
-                        CallResult(record, follow, { number ->
+                        CallResult(record, follow, workspace.settings.currency, { number ->
                             if (number.isNotBlank()) {
                                 val intent = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
                                 try { context.startActivity(intent) }
@@ -197,7 +200,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                             }
                         }) { result ->
                             mutate("Call result saved", { repo.logCall(result) }) {
-                                route = "Customer Detail"
+                                route = if (result.outcome == Outcome.PENDING) "Pending" else "Customer Detail"
                                 if (result.outcome == Outcome.FOLLOW_UP) {
                                     wizard(record.id)
                                     callForFollowUp = result.id
@@ -205,7 +208,18 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                             }
                         }
                     }
-                    "Performance" -> Performance(data)
+                    "Pending" -> PendingCalls(data) { pendingId = it; route = "Update Pending Call" }
+                    "Update Pending Call" -> {
+                        val pending = data.calls.firstOrNull { it.id == pendingId && it.outcome == Outcome.PENDING }
+                        if (pending == null) Text("This call no longer needs a result.")
+                        else PendingResult(pending, data.customers.firstOrNull { it.id == pending.customerId }?.displayName.orEmpty(),
+                            workspace.settings.currency) { outcome, amount ->
+                            mutate("Call result updated", { repo.resolvePending(pending.id, outcome, amount, workspace.settings.currency) }) {
+                                route = "Pending"
+                            }
+                        }
+                    }
+                    "Performance" -> Performance(data, period, { period = it })
                     "Settings" -> SettingsPanel(workspace, model, secureDevice, activeDemo, { activeDemo = it }, snackbar)
                 }
             }
@@ -259,7 +273,8 @@ private fun Metric(label: String, value: Int, modifier: Modifier) {
 }
 
 @Composable
-private fun Mission(data: Workspace, agenda: () -> Unit, add: () -> Unit, start: () -> Unit, customer: (String) -> Unit) {
+private fun Mission(data: Workspace, agenda: () -> Unit, add: () -> Unit, start: () -> Unit, customer: (String) -> Unit,
+                    pending: () -> Unit, period: ReportPeriod, setPeriod: (ReportPeriod) -> Unit) {
     val time = now()
     val today = localDay(time)
     val active = data.customers.filterNot { it.archived }
@@ -270,6 +285,19 @@ private fun Mission(data: Workspace, agenda: () -> Unit, add: () -> Unit, start:
     val completed = data.calls.count { localDay(it.endedAt) == today }
     val needsReview = data.calls.count { localDay(it.endedAt) == today && it.outcome == Outcome.ISSUE }
     val closest = open.sortedWith(compareBy<FollowUp> { it.dueAt }.thenByDescending { it.priority }).firstOrNull()
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Metric("Today's call goal", data.settings.goal, Modifier.weight(1f))
+        Metric("Calls made today", completed, Modifier.weight(1f))
+    }
+    Primary("Start Call Session", onClick = start)
+    OutlinedButton(onClick = pending, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        Text("Pending Calls (${data.calls.count { it.outcome == Outcome.PENDING }})")
+    }
+    Panel {
+        Section("Deal Summary")
+        PeriodPicker(period, setPeriod)
+        DealSummary(report(data, period, time, zone(), demo = data.customers.firstOrNull()?.demo == true).deals)
+    }
     Card(Modifier.fillMaxWidth()) {
         Box(Modifier.background(Brush.linearGradient(listOf(Color(0xff5f32c7), Color(0xff7249c4), Color(0xff494eb0), Color(0xff216f91))))) {
             Canvas(Modifier.matchParentSize()) {
@@ -300,14 +328,7 @@ private fun Mission(data: Workspace, agenda: () -> Unit, add: () -> Unit, start:
             }
         }
     }
-    Panel {
-        Section("Today’s Mission")
-        Text("Complete ${data.settings.goal} calls today.")
-        LinearProgressIndicator(progress = { (completed.toFloat() / data.settings.goal).coerceAtMost(1f) }, modifier = Modifier.fillMaxWidth())
-        Text("$completed of ${data.settings.goal} calls completed")
-    }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Metric("Calls", completed, Modifier.weight(1f))
         Metric("Follow-ups due", due, Modifier.weight(1f))
         Metric("Needs review", needsReview, Modifier.weight(1f))
     }
@@ -318,7 +339,6 @@ private fun Mission(data: Workspace, agenda: () -> Unit, add: () -> Unit, start:
         Text("$overdue overdue · ${open.size - overdue} upcoming", style = MaterialTheme.typography.bodySmall)
         TextButton(onClick = agenda) { Text("Open Agenda") }
     }
-    Primary("Start Call Session", onClick = start)
     OutlinedButton(onClick = add, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("+ Add Follow-up") }
     Section("Recent Activity")
     if (data.timeline.isEmpty()) Text("Saved activity will appear here.")

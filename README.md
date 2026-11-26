@@ -4,12 +4,12 @@ An offline-first customer follow-up and call tracker. The Android app is native 
 
 ## Use the app
 
-- **Journey** shows customer stages, the daily call goal, overdue and upcoming follow-ups, recent activity, and the next action.
+- **Journey** shows today’s call goal and calls made in separate tiles. Start a call session, open the Pending queue, or check deal totals for Today, the rolling last 24 hours, the last 7 days, or the last 30 days.
 - **Customers** holds contact details, notes, tags, status, priority, and an append-only interaction timeline. Archive customers to keep their history.
 - **Agenda** groups follow-ups by date and lets you search or filter by date range, priority, and status. The add flow collects purpose, schedule and note. Deleted follow-ups can be restored.
-- **Call reflection** records one of five outcomes, optional notes, and what to improve. Choose **Follow-up Needed** to go straight to scheduling. The optional timer runs only when you start it.
-- **Performance Coach** calculates today, past week, and past 30 days from your saved records. It shows success and completion rates, issue clusters, a trend and rule-based tips.
-- **Settings** controls appearance, demo data, retention, and encrypted backups. Android settings also include local notifications, app lock, and recent-app privacy. Sign in & Sync is marked Coming Soon.
+- **Call reflection** puts Successful and Pending up front. More outcomes includes Follow-up Needed, which opens the scheduler. Open a Pending call to mark it Successful, Cancelled, or Other while keeping the original call and notes. Saving a Successful result requires the deal amount.
+- **Performance Coach** uses the same report periods as Journey. Deal totals use the time the result was marked Successful. Call counts use the original call time. Amounts are stored as exact decimals, and each currency has its own total.
+- **Settings** controls the daily goal, deal currency, appearance, demo data, retention, and encrypted backups. New deals default to PKR. Select USD or another currency for future deals. Saved deals keep their currency. Android settings also include local notifications, app lock, and recent-app privacy. Sign in & Sync is marked Coming Soon.
 
 ## Android
 
@@ -40,9 +40,9 @@ APK output is in `android/app/build/outputs/apk/`. The AAB is in `android/app/bu
 
 ### Storage and privacy
 
-Room over SQLite stores customers, follow-ups, call logs and timeline entries. Important record changes use transactions. DataStore stores settings. WorkManager reconciles reminders and AlarmManager delivers them. Android requests no Internet, contacts, call-log, microphone, location, SMS, direct-call, or broad storage permission. Backup files use AES-GCM and a passphrase-derived key, with an authenticated versioned manifest and checksum. Dedicate a strong passphrase to backups and keep it privately.
+Room over SQLite stores customers, follow-ups, call logs, exact deal amounts, and timeline entries. Important record changes use transactions. DataStore stores settings. WorkManager reconciles reminders and AlarmManager delivers them. Android requests no Internet, contacts, call-log, microphone, location, SMS, direct-call, or broad storage permission. Backup files use AES-GCM and a passphrase-derived key, with an authenticated versioned manifest and checksum. Dedicate a strong passphrase to backups and keep it privately.
 
-Data Safety draft for Play Console review: the app stores customer and call records locally. The Android app collects and shares no user data over a network and contains no analytics or ads. Portable backup export uses the system document picker and the destination chosen by the user. The dial action opens the device’s phone app. The final Play Console disclosures should match the submitted build.
+Data Safety draft for Play Console review: the app stores customer and call records locally. The Android app collects and shares no user data over a network and contains no analytics or ads. Version 1.2.0 can restore earlier backups. Its newer backups preserve Pending states, deal amounts and currencies. Portable backup export uses the system document picker and the destination chosen by the user. The dial action opens the device’s phone app. The final Play Console disclosures should match the submitted build.
 
 ## Website
 

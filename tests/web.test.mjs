@@ -29,7 +29,7 @@ test('repository serializes large record sets and aggregates actual outcomes', (
   const disk=storage();
   save(disk,w);
   const persisted=load(disk);
-  const result=report(persisted,7,time);
+  const result=report(persisted,'7d',time);
   assert.equal(result.calls,3);
   assert.equal(result.success,33);
   assert.equal(result.completion,50);
@@ -48,4 +48,42 @@ test('encrypted backup rejects wrong passphrases, modified payloads, and duplica
   bytes[bytes.length-1]^=1;
   await assert.rejects(decrypt(new Blob([bytes]),password));
   assert.throws(()=>validate({...w,customers:[w.customers[0],w.customers[0]]}),/duplicated/);
+});
+
+test('pending calls resolve once and totals use exact decimals and the resolution date', async () => {
+  const { normalizeAmount, resolvePending, withOutcome } = await import('../dist/data.js');
+  assert.equal(normalizeAmount('۱٬۲۵۰٫۵۰'),'1250.50');
+  assert.equal(normalizeAmount('12,50'),'12.50');
+  assert.equal(normalizeAmount('-10'),null);
+  const data = workspace();
+  const owner = customer({displayName:'Customer'});
+  data.customers.push(owner);
+  const now = new Date(2026,10,26,1).getTime();
+  const yesterday = now - 7200000;
+  const base = { customerId:owner.id, startedAt:yesterday, endedAt:yesterday, createdAt:yesterday,
+    summaryNote:'First call', reflection:'', followUpId:null, issueCategory:'' };
+  const pending = { ...base,id:crypto.randomUUID(),outcome:'PENDING' };
+  data.calls.push(pending,
+    withOutcome({ ...base,id:crypto.randomUUID() },'RESOLVED','0.000000001','PKR', yesterday),
+    withOutcome({ ...base,id:crypto.randomUUID() },'RESOLVED','3.00','USD', now));
+  const cancelled = { ...base,id:crypto.randomUUID(),outcome:'PENDING' };
+  data.calls.push(cancelled);
+  assert.throws(() => resolvePending(data,pending.id,'RESOLVED','','PKR',now),/deal amount/);
+  assert.equal(data.calls[0].outcome,'PENDING');
+  const saved = resolvePending(data,pending.id,'RESOLVED','9999999999999999999999.123456789','PKR',now);
+  assert.equal(saved.endedAt,yesterday);
+  assert.equal(saved.outcomeAt,now);
+  assert.equal(saved.summaryNote,'First call');
+  assert.throws(() => resolvePending(data,pending.id,'CANCELLED',null,null,now),/final result/);
+  assert.equal(resolvePending(data,cancelled.id,'CANCELLED','123','PKR',now).dealAmount,null);
+  const today = report(data,'today',now);
+  const rolling = report(data,'24h',now);
+  assert.equal(today.calls,0);
+  assert.deepEqual(today.deals,{ successful:2,amounts:{ PKR:'9999999999999999999999.123456789',USD:'3.00' } });
+  assert.equal(rolling.calls,4);
+  assert.equal(rolling.trend.reduce((n,[,value])=>n+value,0),rolling.calls);
+  assert.equal(rolling.deals.amounts.PKR,'9999999999999999999999.123456790');
+  data.settings.currency = 'EUR';
+  const password = 'restore deals and currency';
+  assert.deepEqual(await decrypt(await encrypt(data,password),password),data);
 });

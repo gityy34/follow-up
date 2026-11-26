@@ -1,9 +1,9 @@
 export const stages = { NEW: 'New', CONTACTED: 'Contacted', FOLLOW_UP: 'Follow-up', RESOLVED: 'Resolved' };
-export const outcomes = { RESOLVED: 'Successful / Resolved', FOLLOW_UP: 'Follow-up Needed', HANG_UP: 'Hang-up', NO_ANSWER: 'No Answer', ISSUE: 'Issue / Escalation' };
+export const outcomes = { RESOLVED: 'Successful / Resolved', FOLLOW_UP: 'Follow-up Needed', HANG_UP: 'Hang-up', NO_ANSWER: 'No Answer', ISSUE: 'Issue / Escalation', PENDING: 'Pending', CANCELLED: 'Cancelled', OTHER: 'Other' };
 export const priorities = { NORMAL: 'Normal', HIGH: 'High priority', URGENT: 'Urgent' };
 export const reminders = { DEFAULT: 'Default', DAY: 'One day before', SAME_DAY: 'Same day at 9 AM', HOUR: 'One hour before', SHORT: '15 minutes before', CUSTOM: 'Custom date and time', OFF: 'Off' };
 export const categories = ['Waiting for customer decision', 'Need more information', 'Price / budget concerns', 'Technical issue', 'Other'];
-export const defaults = { themeMode: 'SYSTEM', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true };
+export const defaults = { themeMode: 'SYSTEM', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR' };
 const key = 'you-follow-ups.v1';
 export const uuid = () => crypto.randomUUID();
 export const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -75,6 +75,96 @@ export function load(storage) {
 const validId = value => typeof value === 'string' && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(value);
 const text = (value, maximum) => typeof value === 'string' && value.length <= maximum;
 const time = value => Number.isSafeInteger(value) && value > 0 && value <= 8640000000000000;
+export const periods = { today: 'Today', '24h': 'Last 24 Hours', '7d': 'Last 7 Days', '30d': 'Last 30 Days' };
+export const pendingOutcomes = ['RESOLVED', 'CANCELLED', 'OTHER'];
+export const entryOutcomes = ['RESOLVED', 'PENDING', 'FOLLOW_UP', 'HANG_UP', 'NO_ANSWER', 'ISSUE', 'CANCELLED', 'OTHER'];
+export const stageForOutcome = {
+  RESOLVED: 'RESOLVED', FOLLOW_UP: 'FOLLOW_UP', ISSUE: 'FOLLOW_UP', PENDING: 'FOLLOW_UP',
+  HANG_UP: 'CONTACTED', NO_ANSWER: 'CONTACTED', CANCELLED: 'CONTACTED', OTHER: 'CONTACTED'
+};
+export const validCurrency = code => typeof code === 'string' && /^[A-Z]{3}$/.test(code);
+export const currencyCodes = [...new Set([
+  'PKR', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'CAD', 'AUD', 'INR', 'JPY', 'CNY',
+  ...(Intl.supportedValuesOf?.('currency') ?? [])
+])];
+
+export function normalizeAmount(raw) {
+  const normalized = raw.trim().replace(/[٠-٩۰-۹０-９]/g, digit => {
+    const code = digit.charCodeAt(0);
+    return String(code - (code >= 0xff10 ? 0xff10 : code >= 0x6f0 ? 0x6f0 : 0x660));
+  }).replaceAll('٫','.').replaceAll('٬',',');
+  let decimal;
+  if (/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(normalized)) decimal = normalized;
+  else if (/^[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]*)?$/.test(normalized)) decimal = normalized.replaceAll(',','');
+  else if (/^[0-9]*,[0-9]+$/.test(normalized)) decimal = normalized.replace(',','.');
+  else return null;
+  const [whole, fraction = ''] = decimal.split('.');
+  return (whole.replace(/^0+/, '') || '0') + (fraction ? '.' + fraction : '');
+}
+
+function addAmounts(left, right) {
+  const [leftWhole, leftFraction = ''] = left.split('.');
+  const [rightWhole, rightFraction = ''] = right.split('.');
+  const scale = Math.max(leftFraction.length, rightFraction.length);
+  const total = BigInt(leftWhole + leftFraction.padEnd(scale, '0')) + BigInt(rightWhole + rightFraction.padEnd(scale, '0'));
+  const digits = total.toString().padStart(scale + 1, '0');
+  return scale ? digits.slice(0, -scale) + '.' + digits.slice(-scale) : digits;
+}
+
+export function withOutcome(call, outcome, amount, currency, now = Date.now()) {
+  if (!Object.hasOwn(outcomes, outcome)) throw new Error('Choose a valid call outcome.');
+  const dealAmount = outcome === 'RESOLVED' ? normalizeAmount(amount ?? '') : null;
+  if (outcome === 'RESOLVED' && dealAmount == null) throw new Error('Enter a valid deal amount.');
+  if (dealAmount != null && !validCurrency(currency)) throw new Error('Choose a valid currency.');
+  return { ...call, outcome, dealAmount, dealCurrency: dealAmount == null ? null : currency, outcomeAt: Math.max(now, call.endedAt) };
+}
+
+export function outcomeLabel(call) {
+  return call.dealAmount == null ? outcomes[call.outcome] : `${outcomes[call.outcome]} · ${call.dealCurrency} ${call.dealAmount}`;
+}
+
+export function resolvePending(data, id, outcome, amount, currency, now = Date.now()) {
+  const index = data.calls.findIndex(c => c.id === id && c.outcome === 'PENDING');
+  if (index < 0) throw new Error('This call already has a final result.');
+  if (!pendingOutcomes.includes(outcome)) throw new Error('Choose a final outcome.');
+  const saved = withOutcome(data.calls[index], outcome, amount, currency, now);
+  const customer = data.customers.find(c => c.id === saved.customerId);
+  if (!customer) throw new Error('Customer is unavailable.');
+  data.calls[index] = saved;
+  const latest = data.calls.filter(c => c.customerId === customer.id).sort((a,b) =>
+    b.endedAt - a.endedAt || b.createdAt - a.createdAt || b.id.localeCompare(a.id))[0];
+  if (latest?.id === id) {
+    customer.stage = stageForOutcome[outcome];
+    customer.updatedAt = now;
+  }
+  event(data, customer.id, 'Pending call updated', id, outcomeLabel(saved), now);
+  completeLinkedFollowUp(data,saved,now);
+  return saved;
+}
+
+export function completeLinkedFollowUp(data, call, now = Date.now()) {
+  if (call.outcome !== 'RESOLVED') return;
+  const followUp = data.followUps.find(f => f.id === call.followUpId && f.status === 'OPEN');
+  if (!followUp) return;
+  followUp.status = 'DONE';
+  followUp.updatedAt = now;
+  event(data,call.customerId,'Follow-up completed',followUp.id,followUp.purpose,now);
+}
+
+export function dealTotals(calls, start, end) {
+  let successful = 0;
+  const amounts = {};
+  for (const call of calls) {
+    const at = call.outcomeAt ?? call.endedAt;
+    if (call.outcome !== 'RESOLVED' || at < start || at >= end) continue;
+    successful++;
+    if (call.dealAmount != null && validCurrency(call.dealCurrency)) {
+      amounts[call.dealCurrency] = addAmounts(amounts[call.dealCurrency] ?? '0', call.dealAmount);
+    }
+  }
+  return { successful, amounts: Object.fromEntries(Object.entries(amounts).sort(([a],[b]) => a.localeCompare(b))) };
+}
+
 export const validPhone = value => value === '' || (value.length <= 40 && /^[+()\d .#-]+$/.test(value) && (value.match(/\d/g)?.length ?? 0) >= 3);
 function validZone(id) {
   if (typeof id !== 'string') return false;
@@ -100,12 +190,15 @@ export function validate(data) {
     Object.hasOwn(priorities,f.priority) && text(f.note,2000) && time(f.createdAt) && time(f.updatedAt));
   unique(data.calls, c => records.has(c.customerId) && time(c.startedAt) && time(c.endedAt) && c.startedAt <= c.endedAt &&
     Object.hasOwn(outcomes,c.outcome) && text(c.issueCategory,120) && text(c.summaryNote,200) && text(c.reflection,200) &&
-    (c.followUpId == null || follows.get(c.followUpId)?.customerId === c.customerId) && time(c.createdAt));
-  unique(data.timeline, e => records.has(e.customerId) && text(e.eventType,120) && text(e.referenceId,120) && text(e.displayPayload,4000) && time(e.eventTime));
+    (c.followUpId == null || follows.get(c.followUpId)?.customerId === c.customerId) && time(c.createdAt) &&
+    (c.outcomeAt == null || (time(c.outcomeAt) && c.outcomeAt >= c.endedAt)) &&
+    (c.dealAmount == null ? c.dealCurrency == null :
+      c.outcome === 'RESOLVED' && typeof c.dealAmount === 'string' && normalizeAmount(c.dealAmount) === c.dealAmount && validCurrency(c.dealCurrency)));
+  unique(data.timeline, e => records.has(e.customerId) && text(e.eventType,120) && text(e.referenceId,120) && typeof e.displayPayload === "string" && time(e.eventTime));
   const settings = { ...defaults, ...data.settings };
   if (!['SYSTEM','LIGHT','DARK'].includes(settings.themeMode) || !['Violet','Ocean','Forest'].includes(settings.selectedPalette) ||
       !Number.isInteger(settings.goal) || settings.goal < 1 || settings.goal > 500 || !Number.isInteger(settings.retentionDays) ||
-      settings.retentionDays < 1 || settings.retentionDays > 3650) throw new Error('Settings are invalid.');
+      settings.retentionDays < 1 || settings.retentionDays > 3650 || !validCurrency(settings.currency)) throw new Error('Settings are invalid.');
   return { ...data, settings };
 }
 export function visible(data, showDemo) {
@@ -114,11 +207,13 @@ export function visible(data, showDemo) {
   return { ...data, customers, followUps: data.followUps.filter(f => ids.has(f.customerId)),
     calls: data.calls.filter(c => ids.has(c.customerId)), timeline: data.timeline.filter(e => ids.has(e.customerId)) };
 }
-export function report(data, days, now = Date.now()) {
+export function report(data, period, now = Date.now()) {
+  const days = period === '30d' ? 30 : period === '7d' ? 7 : 1;
   const first = day(addDays(now, -(days - 1)));
   const last = day(now);
-  const inPeriod = time => day(time) >= first && day(time) <= last;
-  const calls = data.calls.filter(c => inPeriod(c.endedAt));
+  const start = period === '24h' ? now - 86400000 : new Date(first + 'T00:00:00').getTime();
+  const inPeriod = time => period === '24h' ? time >= start && time <= now : day(time) >= first && day(time) <= last;
+  const calls = data.calls.filter(c => inPeriod(c.endedAt) && c.endedAt <= now);
   const due = data.followUps.filter(f => inPeriod(f.dueAt) && f.status !== 'DELETED');
   const counts = Object.fromEntries(Object.keys(outcomes).map(o => [o, 0]));
   const issues = new Map();
@@ -142,11 +237,16 @@ export function report(data, days, now = Date.now()) {
   if (topIssues.length) tips.push(`Prepare a short response for the most common issue: ${topIssues[0][0]}.`);
   if (best != null) tips.push('Use your strongest calling window for high-priority customers.');
   if (!tips.length) tips.push('Log each outcome and write one clear next action after every call.');
-  const trend = Array.from({ length: days }, (_, i) => {
+  const trend = period === '24h' ? Array.from({ length: 4 }, (_, i) => {
+    const startOfSlot = start + i * 21600000;
+    const label = new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(startOfSlot);
+    return [label, calls.filter(c => c.endedAt >= startOfSlot && (i === 3 || c.endedAt < startOfSlot + 21600000)).length];
+  }) : Array.from({ length: days }, (_, i) => {
     const time = addDays(now, i - days + 1);
     return [new Intl.DateTimeFormat('en', days <= 7 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }).format(time), daily.get(day(time)) ?? 0];
   });
   return { counts, issues: topIssues, best, tips: tips.slice(0, 3), trend, calls: calls.length, scheduled: due.length,
+    deals: dealTotals(data.calls,start,now+1),
     success: calls.length ? Math.floor(counts.RESOLVED * 100 / calls.length) : 0,
     completion: due.length ? Math.floor(due.filter(f => f.status === 'DONE').length * 100 / due.length) : 0 };
 }
@@ -164,7 +264,7 @@ export async function encrypt(data, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const raw = JSON.stringify(data);
-  const manifest = { formatVersion: 1, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.1.0' };
+  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.2.0' };
   const payload = encoder.encode(JSON.stringify({ manifest, data: raw }));
   if (payload.length > 100 * 1024 * 1024) throw new Error('Backup is too large.');
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password, salt), payload);
@@ -178,7 +278,7 @@ export async function decrypt(blob, password) {
   const salt = buffer.slice(7,23);
   const raw = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password,salt), buffer.subarray(35));
   const packet = JSON.parse(decoder.decode(raw));
-  if (packet.manifest?.formatVersion !== 1 || !packet.manifest.encrypted || !time(packet.manifest.createdAt) ||
+  if (![1,2].includes(packet.manifest?.formatVersion) || !packet.manifest.encrypted || !time(packet.manifest.createdAt) ||
       !packet.manifest.appVersion || packet.manifest.checksum !== await checksum(packet.data)) throw new Error('Backup integrity could not be verified.');
   return validate(JSON.parse(packet.data));
 }

@@ -20,6 +20,9 @@ internal interface FollowDao {
     @Query("SELECT * FROM followups") suspend fun allFollowUps(): List<FollowUp>
     @Query("SELECT * FROM customers") suspend fun allCustomers(): List<Customer>
     @Query("SELECT * FROM calls") suspend fun allCalls(): List<CallLog>
+    @Query("SELECT * FROM calls WHERE id = :id") suspend fun call(id: String): CallLog?
+    @Query("SELECT id FROM calls WHERE customerId = :customerId ORDER BY endedAt DESC, createdAt DESC, id DESC LIMIT 1")
+    suspend fun latestCallId(customerId: String): String?
     @Query("SELECT * FROM timeline") suspend fun allTimeline(): List<TimelineEvent>
     @Query("SELECT * FROM restore_journal WHERE id = 1") suspend fun journal(): RestoreJournal?
     @Upsert suspend fun put(customer: Customer)
@@ -28,6 +31,7 @@ internal interface FollowDao {
     @Query("UPDATE calls SET followUpId = :followUp WHERE id = :call AND customerId = :customer")
     suspend fun linkCall(call: String, customer: String, followUp: String)
     @Insert suspend fun insert(call: CallLog)
+    @Update suspend fun update(call: CallLog)
     @Insert suspend fun insert(event: TimelineEvent)
     @Query("DELETE FROM customers") suspend fun clearRecords()
     @Query("DELETE FROM customers WHERE demo = 1") suspend fun removeDemo()
@@ -36,14 +40,21 @@ internal interface FollowDao {
 }
 
 @Database(entities = [Customer::class, FollowUp::class, CallLog::class, TimelineEvent::class, RestoreJournal::class],
-    version = 2, exportSchema = true)
+    version = 3, exportSchema = true)
 internal abstract class FollowDatabase : RoomDatabase() {
     abstract val dao: FollowDao
 
     companion object {
-        val migration = object : Migration(1, 2) {
+        val migration1To2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS restore_journal (id INTEGER NOT NULL PRIMARY KEY, settingsJson TEXT NOT NULL)")
+            }
+        }
+        val migration2To3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE calls ADD COLUMN dealAmount TEXT")
+                db.execSQL("ALTER TABLE calls ADD COLUMN dealCurrency TEXT")
+                db.execSQL("ALTER TABLE calls ADD COLUMN outcomeAt INTEGER")
             }
         }
     }
@@ -123,14 +134,45 @@ internal class Repository(private val database: FollowDatabase, val settings: Se
         val customer = requireNotNull(dao.customer(call.customerId)) { "Customer is missing." }
         require(call.startedAt <= call.endedAt && call.summaryNote.length <= 200 && call.reflection.length <= 200) { "Check the call details." }
         require(call.followUpId == null || dao.followUp(call.followUpId)?.customerId == call.customerId) { "This follow-up belongs to a different customer." }
-        dao.insert(call)
-        dao.put(customer.copy(stage = stageAfter(call.outcome), updatedAt = now()))
-        event(customer.id, "Call logged", call.id, listOf(call.outcome.title, call.issueCategory, call.summaryNote,
+        check(!customer.archived) { "Restore this customer before logging a call." }
+        val saved = withOutcome(call, call.outcome, call.dealAmount, call.dealCurrency)
+        dao.insert(saved)
+        dao.put(customer.copy(stage = stageAfter(saved.outcome), updatedAt = now()))
+        event(customer.id, "Call logged", saved.id, listOf(outcomeLabel(saved), saved.issueCategory, saved.summaryNote,
             call.reflection.takeIf { it.isNotBlank() }?.let { "Improve next time: $it" }.orEmpty()).filter { it.isNotBlank() }.joinToString(" · "))
         if (call.outcome == Outcome.RESOLVED && call.followUpId != null) {
             changeFollowStatus(call.followUpId, FollowStatus.DONE, FollowStatus.OPEN)
         }
     }
+
+    suspend fun resolvePending(id: String, outcome: Outcome, amount: String?, currency: String?) = database.withTransaction {
+        require(outcome in pendingOutcomes)
+        val call = requireNotNull(dao.call(id)) { "Call is missing." }
+        check(call.outcome == Outcome.PENDING) { "This call already has a final result." }
+        val customer = requireNotNull(dao.customer(call.customerId))
+        val saved = withOutcome(call, outcome, amount, currency)
+        dao.update(saved)
+        // Only the latest call controls the customer's current stage.
+        if (dao.latestCallId(customer.id) == id) {
+            dao.put(customer.copy(stage = stageAfter(outcome), updatedAt = now()))
+        }
+        event(customer.id, "Pending call updated", call.id, outcomeLabel(saved))
+        if (outcome == Outcome.RESOLVED && call.followUpId != null) {
+            changeFollowStatus(call.followUpId, FollowStatus.DONE, FollowStatus.OPEN)
+        }
+    }
+
+    private fun withOutcome(call: CallLog, outcome: Outcome, amount: String?, currency: String?): CallLog {
+        val normalized = if (outcome == Outcome.RESOLVED) requireNotNull(amount?.let(::normalizeAmount)) {
+            "Enter a valid deal amount."
+        } else null
+        require(normalized == null || currency?.let(::validCurrency) == true) { "Choose a valid currency." }
+        return call.copy(outcome = outcome, dealAmount = normalized, dealCurrency = currency.takeIf { normalized != null },
+            outcomeAt = maxOf(now(), call.endedAt))
+    }
+
+    private fun outcomeLabel(call: CallLog) =
+        if (call.dealAmount == null) call.outcome.title else "${call.outcome.title} · ${call.dealCurrency} ${call.dealAmount}"
 
     suspend fun setReminderCache(id: String, dueAt: Long, policy: Reminder, next: Long?, status: String) = database.withTransaction {
         val row = dao.followUp(id) ?: return@withTransaction
@@ -198,7 +240,8 @@ internal class Repository(private val database: FollowDatabase, val settings: Se
             saveFollowUp(FollowUp(customerId = customer.id, purpose = listOf("Discuss proposal", "Confirm interest", "Share product info")[i],
                 dueAt = now() + (i - 1) * 86_400_000L, note = "Example only. Demo records do not trigger reminders."))
             if (i != 2) logCall(CallLog(customerId = customer.id, startedAt = now() - 300_000, endedAt = now() - 200_000,
-                outcome = if (i == 0) Outcome.FOLLOW_UP else Outcome.RESOLVED, summaryNote = "Sample customer conversation."))
+                outcome = if (i == 0) Outcome.PENDING else Outcome.RESOLVED, summaryNote = "Sample customer conversation.",
+                dealAmount = "1250.50".takeIf { i == 1 }, dealCurrency = "PKR".takeIf { i == 1 }))
         }
     }
 

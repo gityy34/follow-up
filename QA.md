@@ -15,3 +15,10 @@ The attached Concept 3 image supplies the violet Customer Journey, Customer Deta
 | Android on-device | Startup and upgrade from the old WebView tracker, rotation, force-stop, reboot, exact/inexact alarms, Doze, permission denial/grant, notification actions, TalkBack, large text, app lock and document-picker recovery | Pending. No connected Android device or accelerated emulator was available. |
 
 Android builds use compile and target SDK 36, minimum Android API 26, JDK 21 and Gradle 8.13. Install the debug package to test with independent data. A reminder’s timing can vary under Android’s background limits. Browser and Android data stay separate unless the user moves a backup between them.
+
+## Version 1.2.0 deal workflow
+
+- Eight Android JVM tests passed, covering precision, multi-currency totals, local Today versus rolling 24 hours, and encrypted backup of Pending and Successful calls. Debug lint, signed Android packaging and test APK compilation passed.
+- The SQLite 2 → 3 migration preserved a pre-existing call and its notes. The new amount and currency fields remain empty for legacy calls that never recorded an amount.
+- The browser data suite and DOM smoke flow passed for Pending, mandatory Successful amount, exact decimals, date filters, and currency changes. Existing deals retain their original labels and each currency total stays separate.
+- On-device Android execution of the new Pending and payment UI remains pending. The repository instrumentation suite was built.

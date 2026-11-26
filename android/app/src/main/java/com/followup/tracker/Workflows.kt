@@ -116,11 +116,13 @@ internal fun FollowWizard(customers: List<Customer>, initial: String, previous: 
 }
 
 @Composable
-internal fun CallResult(customer: Customer, follow: FollowUp?, dial: (String) -> Unit, save: (CallLog) -> Unit) {
+internal fun CallResult(customer: Customer, follow: FollowUp?, currency: String, dial: (String) -> Unit, save: (CallLog) -> Unit) {
     var started by rememberSaveable { mutableStateOf(0L) }
     var stopped by rememberSaveable { mutableStateOf(0L) }
     var clock by remember { mutableStateOf(now()) }
     var outcome by rememberSaveable { mutableStateOf<Outcome?>(null) }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var more by rememberSaveable { mutableStateOf(false) }
     var issue by rememberSaveable { mutableStateOf("Waiting for customer decision") }
     var note by rememberSaveable { mutableStateOf("") }
     var reflection by rememberSaveable { mutableStateOf("") }
@@ -142,30 +144,114 @@ internal fun CallResult(customer: Customer, follow: FollowUp?, dial: (String) ->
     Panel {
         Section("Call Outcome")
         Text("What was the result of this call?")
-        Outcome.entries.forEach { option ->
-            if (option == outcome) Primary("✓  ${option.title}") { outcome = option }
-            else OutlinedButton({ outcome = option }, Modifier.fillMaxWidth().heightIn(min = 50.dp)) { Text(option.title) }
+        entryOutcomes.take(2).forEach { option ->
+            OutcomeButton(option, outcome) { outcome = option }
         }
+        TextButton({
+            more = !more
+            if (!more && outcome !in entryOutcomes.take(2)) outcome = null
+        }, Modifier.heightIn(min = 48.dp)) { Text(if (more) "Fewer outcomes" else "More outcomes") }
+        if (more) entryOutcomes.drop(2).forEach { option ->
+            OutcomeButton(option, outcome) { outcome = option }
+        }
+        if (outcome == Outcome.RESOLVED) AmountField(amount, currency) { amount = it }
         if (outcome == Outcome.ISSUE) Choice("Issue category", listOf("Waiting for customer decision", "Need more information",
             "Price / budget concerns", "Technical issue", "Other"), issue, { it }) { issue = it }
     }
     Field("What went well?  ${note.length}/200", note, { note = it.take(200) }, 3)
     Field("What can I improve next time?  ${reflection.length}/200", reflection, { reflection = it.take(200) }, 3)
-    Primary("Save Reflection", outcome != null) {
+    val valid = outcome != null && (outcome != Outcome.RESOLVED || normalizeAmount(amount) != null)
+    Primary(if (outcome == Outcome.PENDING) "Save as Pending" else "Save Call Result", valid) {
         val end = stopped.takeIf { it > 0 } ?: now()
         outcome?.let { selected ->
             save(CallLog(id = callId, customerId = customer.id, startedAt = started.takeIf { it in 1..end } ?: end, endedAt = end,
                 outcome = selected, issueCategory = issue.takeIf { selected == Outcome.ISSUE }.orEmpty(), summaryNote = note.trim(),
-                reflection = reflection.trim(), followUpId = follow?.id))
+                reflection = reflection.trim(), followUpId = follow?.id,
+                dealAmount = amount.takeIf { selected == Outcome.RESOLVED }, dealCurrency = currency.takeIf { selected == Outcome.RESOLVED }))
         }
     }
 }
 
 @Composable
-internal fun Performance(data: Workspace) {
-    var window by rememberSaveable { mutableStateOf(7) }
-    val perf = remember(data, window) { report(data, window, now(), zone(), demo = data.customers.firstOrNull()?.demo == true) }
-    Choice("Period", listOf(1, 7, 30), window, { if (it == 1) "Today" else "Last $it Days" }) { window = it }
+private fun OutcomeButton(option: Outcome, selected: Outcome?, select: () -> Unit) {
+    if (option == selected) Primary("✓  ${option.title}", onClick = select)
+    else OutlinedButton(select, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(option.title) }
+}
+
+@Composable
+private fun AmountField(value: String, currency: String, update: (String) -> Unit) {
+    val invalid = value.isNotBlank() && normalizeAmount(value) == null
+    OutlinedTextField(value, update, label = { Text("Deal amount ($currency)") }, modifier = Modifier.fillMaxWidth(),
+        singleLine = true, isError = invalid, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+        supportingText = { if (invalid) Text("Enter a non-negative amount, for example 1250.50.") })
+}
+
+@Composable
+internal fun PendingCalls(data: Workspace, open: (String) -> Unit) {
+    val rows = data.calls.filter { it.outcome == Outcome.PENDING }.sortedByDescending { it.endedAt }
+    val customers = data.customers.associateBy { it.id }
+    var limit by rememberSaveable { mutableIntStateOf(40) }
+    if (rows.isEmpty()) Panel { Text("No pending calls. Calls saved as Pending will appear here.") }
+    rows.take(limit).forEach { row ->
+        Card(onClick = { open(row.id) }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.padding(14.dp)) {
+                Text(customers[row.customerId]?.displayName.orEmpty(), fontWeight = FontWeight.Bold)
+                Text("Call made ${dateLabel(row.endedAt)}")
+                if (row.summaryNote.isNotBlank()) Text(row.summaryNote, maxLines = 2)
+            }
+        }
+    }
+    if (rows.size > limit) Primary("Show more") { limit += 40 }
+}
+
+@Composable
+internal fun PendingResult(call: CallLog, name: String, currency: String, save: (Outcome, String?) -> Unit) {
+    var result by rememberSaveable(call.id) { mutableStateOf<Outcome?>(null) }
+    var amount by rememberSaveable(call.id) { mutableStateOf("") }
+    Panel {
+        Section(name)
+        Text("Call made ${dateLabel(call.endedAt)}")
+        if (call.summaryNote.isNotBlank()) Text(call.summaryNote)
+    }
+    Panel {
+        Section("Final Outcome")
+        pendingOutcomes.forEach { option -> OutcomeButton(option, result) { result = option } }
+        if (result == Outcome.RESOLVED) AmountField(amount, currency) { amount = it }
+    }
+    Primary("Save Result", result != null && (result != Outcome.RESOLVED || normalizeAmount(amount) != null)) {
+        result?.let { save(it, amount.takeIf { _ -> it == Outcome.RESOLVED }) }
+    }
+}
+
+@Composable
+internal fun PeriodPicker(period: ReportPeriod, select: (ReportPeriod) -> Unit) {
+    ReportPeriod.entries.chunked(2).forEach { pair ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            pair.forEach { option ->
+                FilterChip(selected = option == period, onClick = { select(option) }, label = { Text(option.title) },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DealSummary(totals: DealTotals) {
+    Text("${totals.successful} successful deals")
+    if (totals.amounts.isEmpty()) Text("No deal amounts recorded.", style = MaterialTheme.typography.bodySmall)
+    totals.amounts.forEach { (currency, amount) -> Text("$currency $amount", fontWeight = FontWeight.Bold) }
+}
+
+@Composable
+internal fun Performance(data: Workspace, period: ReportPeriod, setPeriod: (ReportPeriod) -> Unit) {
+    val perf = report(data, period, now(), zone(), demo = data.customers.firstOrNull()?.demo == true)
+    PeriodPicker(period, setPeriod)
+    Panel {
+        Section("Deal Summary")
+        DealSummary(perf.deals)
+    }
     Panel {
         Section("Your Performance")
         Text("${perf.calls} calls  ·  ${perf.scheduled} follow-ups  ·  ${perf.resolved} resolved")

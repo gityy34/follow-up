@@ -42,12 +42,42 @@ class DomainTest {
             CallLog(customerId = customer.id, startedAt = now, endedAt = now, outcome = Outcome.ISSUE, issueCategory = "Price"),
             CallLog(customerId = demo.id, startedAt = now, endedAt = now, outcome = Outcome.NO_ANSWER)
         ))
-        val result = report(raw, 7, now, tz)
+        val result = report(raw, ReportPeriod.LAST_7_DAYS, now, tz)
         assertEquals(2, result.calls)
         assertEquals(50, result.successRate)
         assertEquals(50, result.completionRate)
         assertEquals(1, result.issues["Price"])
         assertEquals(13, result.bestHour)
         assertEquals(2, result.trend.last().second)
+    }
+    @Test fun enteredAmountsRetainDecimalPrecision() {
+        assertEquals("123456789012345678901234567890.123456789", normalizeAmount("123456789012345678901234567890.123456789"))
+        assertEquals("1250.50", normalizeAmount("۱٬۲۵۰٫۵۰"))
+        assertEquals("12.50", normalizeAmount("12,50"))
+        assertEquals("0.05", normalizeAmount(".05"))
+        assertNull(normalizeAmount("-1.00"))
+        assertNull(normalizeAmount("1e20"))
+    }
+
+    @Test fun dealsUseResolutionDateAndDoNotMixCurrencies() {
+        val tz = ZoneId.of("Asia/Karachi")
+        val current = ZonedDateTime.of(2026, 11, 12, 1, 0, 0, 0, tz).toInstant().toEpochMilli()
+        val yesterday = current - 7_200_000L
+        val customer = Customer(displayName = "Real", phoneNumber = "")
+        val call = CallLog(customerId = customer.id, startedAt = yesterday, endedAt = yesterday, outcome = Outcome.RESOLVED,
+            outcomeAt = current - 1, dealAmount = "9999999999999999999999.123456789", dealCurrency = "PKR")
+        val older = call.copy(id = uuid(), outcomeAt = yesterday, dealAmount = "0.000000001")
+        val usd = call.copy(id = uuid(), dealCurrency = "USD", dealAmount = "1.50")
+        val pending = call.copy(id = uuid(), outcome = Outcome.PENDING, dealAmount = null, dealCurrency = null)
+        val data = Workspace(customers = listOf(customer), calls = listOf(call, older, usd, pending))
+        val today = report(data, ReportPeriod.TODAY, current, tz)
+        assertEquals(0, today.calls)
+        assertEquals(2, today.deals.successful)
+        assertEquals(mapOf("PKR" to "9999999999999999999999.123456789", "USD" to "1.50"), today.deals.amounts)
+        val rolling = report(data, ReportPeriod.LAST_24_HOURS, current, tz)
+        assertEquals(4, rolling.calls)
+        assertEquals(3, rolling.deals.successful)
+        assertEquals("9999999999999999999999.123456790", rolling.deals.amounts["PKR"])
+        assertEquals(rolling.calls, rolling.trend.sumOf { it.second })
     }
 }

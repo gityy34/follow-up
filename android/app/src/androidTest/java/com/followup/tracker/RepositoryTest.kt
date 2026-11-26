@@ -23,10 +23,17 @@ class RepositoryTest {
             repeat(120) { repo.saveFollowUp(FollowUp(customerId = owner.id, purpose = "Test $it", dueAt = now() + it)) }
             val follow = repo.dao.allFollowUps().first()
             for (outcome in Outcome.entries) {
-                repo.logCall(CallLog(customerId = owner.id, startedAt = now(), endedAt = now(), outcome = outcome, followUpId = follow.id))
+                repo.logCall(CallLog(customerId = owner.id, startedAt = now(), endedAt = now(), outcome = outcome, followUpId = follow.id,
+                    dealAmount = "999999999999999999.123".takeIf { outcome == Outcome.RESOLVED },
+                    dealCurrency = "PKR".takeIf { outcome == Outcome.RESOLVED }))
             }
             repo.changeFollowStatus(follow.id, FollowStatus.DELETED)
             repo.changeFollowStatus(follow.id, FollowStatus.OPEN, FollowStatus.DELETED)
+            val pending = repo.dao.allCalls().single { it.outcome == Outcome.PENDING }
+            repo.resolvePending(pending.id, Outcome.RESOLVED, "200.50", "USD")
+            try { repo.resolvePending(pending.id, Outcome.CANCELLED, null, null); fail("A resolved pending call is final") }
+            catch (_: IllegalStateException) {}
+            repo.changeFollowStatus(follow.id, FollowStatus.OPEN)
             val snapshot = repo.snapshot()
             val rollback = snapshot.copy(calls = snapshot.calls + snapshot.calls.first())
             try { repo.replace(rollback); fail("Duplicate insert must fail") } catch (_: android.database.sqlite.SQLiteConstraintException) {}
@@ -35,7 +42,9 @@ class RepositoryTest {
             database = open()
             val recovered = Repository(database, settings).snapshot()
             assertEquals(120, recovered.followUps.size)
-            assertEquals(5, recovered.calls.size)
+            assertEquals(Outcome.entries.size, recovered.calls.size)
+            assertEquals("200.50", recovered.calls.single { it.id == pending.id }.dealAmount)
+            assertEquals("USD", recovered.calls.single { it.id == pending.id }.dealCurrency)
             assertEquals(snapshot.timeline.toSet(), recovered.timeline.toSet())
             assertEquals(FollowStatus.OPEN, recovered.followUps.first { it.id == follow.id }.status)
         } finally {

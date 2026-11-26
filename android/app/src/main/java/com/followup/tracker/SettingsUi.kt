@@ -121,6 +121,9 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
     Panel {
         Section("Appearance")
         OutlinedButton({ appearance = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open Appearance") }
+        Choice("Deal currency", (listOf("PKR", "USD", "EUR", "GBP", "AED", "SAR") + currencyCodes + config.currency).distinct(),
+            config.currency, { it }) { change(config.copy(currency = it)) }
+        Text("The currency applies to new deals. Existing deals keep the currency recorded when they were saved.")
         Choice("Daily call goal", (listOf(1, 3, 5, 10, 15, 20, 30, 50) + config.goal).distinct().sorted(),
             config.goal, { it.toString() }) { change(config.copy(goal = it)) }
     }

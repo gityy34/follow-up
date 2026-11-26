@@ -27,7 +27,7 @@ internal fun settingsJson(s: AppSettings) = obj(
     "themeMode" to s.theme.name, "selectedPalette" to s.palette, "notificationEnabled" to s.notifications,
     "defaultReminderOffset" to s.defaultReminder.name, "appLockEnabled" to s.appLock, "lockAfter" to s.lockAfter,
     "privateRecents" to s.privateRecents, "goal" to s.goal, "retentionDays" to s.retentionDays,
-    "lastExport" to s.lastExport, "exportLabel" to s.exportLabel, "onboardingDone" to s.onboardingDone
+    "lastExport" to s.lastExport, "exportLabel" to s.exportLabel, "onboardingDone" to s.onboardingDone, "currency" to s.currency
 )
 
 internal fun settingsFromJson(s: JSONObject) = AppSettings(
@@ -35,7 +35,8 @@ internal fun settingsFromJson(s: JSONObject) = AppSettings(
     s.optBoolean("notificationEnabled"), s.enum("defaultReminderOffset", Reminder.DAY).takeUnless { it == Reminder.CUSTOM || it == Reminder.DEFAULT } ?: Reminder.DAY,
     s.optBoolean("appLockEnabled"), s.optInt("lockAfter", 1).coerceIn(0, 60), s.optBoolean("privateRecents"),
     s.optInt("goal", 5).coerceIn(1, 500), s.optInt("retentionDays", 90).coerceIn(1, 3650),
-    s.optLong("lastExport"), s.optString("exportLabel").take(80), s.optBoolean("onboardingDone")
+    s.optLong("lastExport"), s.optString("exportLabel").take(80), s.optBoolean("onboardingDone"),
+    s.optString("currency").takeIf(::validCurrency) ?: "PKR"
 )
 
 internal data class BackupManifest(val formatVersion: Int, val createdAt: Long, val checksum: String,
@@ -63,8 +64,8 @@ internal object BackupCodec {
         val salt = ByteArray(saltSize).also(random::nextBytes)
         val nonce = ByteArray(nonceSize).also(random::nextBytes)
         val data = encode(workspace).toString()
-        val manifest = obj("formatVersion" to 1, "createdAt" to now(), "checksum" to digest(data.toByteArray()),
-            "encrypted" to true, "appVersion" to "1.1.0")
+        val manifest = obj("formatVersion" to 2, "createdAt" to now(), "checksum" to digest(data.toByteArray()),
+            "encrypted" to true, "appVersion" to "1.2.0")
         val payload = obj("manifest" to manifest, "data" to data).toString().toByteArray()
         require(payload.size <= maxSize) { "This backup exceeds this version’s file size limit." }
         return try { magic + salt + nonce + cipher(Cipher.ENCRYPT_MODE, passphrase, salt, nonce).doFinal(payload) }
@@ -96,7 +97,7 @@ internal object BackupCodec {
             val raw = packet.getJSONObject("manifest")
             val manifest = BackupManifest(raw.getInt("formatVersion"), raw.getLong("createdAt"),
                 raw.getString("checksum"), raw.getBoolean("encrypted"), raw.getString("appVersion"))
-            require(manifest.formatVersion == 1 && manifest.encrypted && manifest.createdAt > 0 && manifest.appVersion.isNotBlank()) {
+            require(manifest.formatVersion in 1..2 && manifest.encrypted && manifest.createdAt > 0 && manifest.appVersion.isNotBlank()) {
                 "Unsupported backup version."
             }
             val data = packet.getString("data")
@@ -121,7 +122,8 @@ internal object BackupCodec {
             "createdAt" to f.createdAt, "updatedAt" to f.updatedAt) }),
         "calls" to JSONArray(w.calls.map { c -> obj("id" to c.id, "customerId" to c.customerId, "startedAt" to c.startedAt,
             "endedAt" to c.endedAt, "outcome" to c.outcome.name, "issueCategory" to c.issueCategory, "summaryNote" to c.summaryNote,
-            "reflection" to c.reflection, "followUpId" to c.followUpId, "createdAt" to c.createdAt) }),
+            "reflection" to c.reflection, "followUpId" to c.followUpId, "createdAt" to c.createdAt,
+            "dealAmount" to c.dealAmount, "dealCurrency" to c.dealCurrency, "outcomeAt" to c.outcomeAt) }),
         "timeline" to JSONArray(w.timeline.map { e -> obj("id" to e.id, "customerId" to e.customerId, "eventType" to e.eventType,
             "referenceId" to e.referenceId, "eventTime" to e.eventTime, "displayPayload" to e.displayPayload) })
     )
@@ -150,9 +152,14 @@ internal object BackupCodec {
         val calls = data.getJSONArray("calls").items { c ->
             CallLog(id(c.getString("id")), id(c.getString("customerId")), c.getLong("startedAt"), c.getLong("endedAt"),
                 Outcome.valueOf(c.getString("outcome")), c.optString("issueCategory"), c.optString("summaryNote"),
-                c.optString("reflection"), c.stringOrNull("followUpId"), c.getLong("createdAt")).also {
+                c.optString("reflection"), c.stringOrNull("followUpId"), c.getLong("createdAt"),
+                c.stringOrNull("dealAmount"), c.stringOrNull("dealCurrency"), c.longOrNull("outcomeAt")).also {
                 require(it.customerId in customerIds && it.startedAt in 1..it.endedAt && it.summaryNote.length <= 200 && it.reflection.length <= 200)
                 require(it.followUpId == null || followById[it.followUpId]?.customerId == it.customerId)
+                require(it.outcomeAt == null || it.outcomeAt >= it.endedAt)
+                require(if (it.dealAmount == null) it.dealCurrency == null else
+                    it.outcome == Outcome.RESOLVED && normalizeAmount(it.dealAmount) == it.dealAmount &&
+                        it.dealCurrency?.let(::validCurrency) == true)
             }
         }
         val events = data.getJSONArray("timeline").items { e ->

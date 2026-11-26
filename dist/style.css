@@ -168,3 +168,8 @@ dialog::backdrop { background: #251b3c91; }
   .checkpoints { height: 12.25rem; }
   .card { padding: .85rem; }
 }
+.call-stats { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.periods { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .45rem; }
+.periods button { min-width: 0; font-size: .85rem; padding-inline: .4rem; }
+.periods [aria-pressed="true"] { color: var(--primary-dark); background: var(--soft); border-color: var(--primary); }
+.deal-value { font-weight: 760; color: var(--primary-dark); overflow-wrap: anywhere; }

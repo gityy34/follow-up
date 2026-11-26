@@ -28,4 +28,12 @@ class BackupTest {
             BackupCodec.import(BackupCodec.export(invalid, pass).inputStream(), pass)
         }
     }
+    @Test fun backupPreservesAmountsCurrencyAndPendingCalls() {
+        val savedAt = now()
+        val pending = CallLog(customerId = customer.id, startedAt = savedAt - 100, endedAt = savedAt - 10, outcome = Outcome.PENDING)
+        val resolved = pending.copy(id = uuid(), outcome = Outcome.RESOLVED, dealAmount = "9999999999999999999999.123456789",
+            dealCurrency = "PKR", outcomeAt = savedAt)
+        val workspace = state.copy(calls = listOf(pending, resolved), settings = state.settings.copy(currency = "USD"))
+        assertEquals(workspace, BackupCodec.import(BackupCodec.export(workspace, pass).inputStream(), pass))
+    }
 }

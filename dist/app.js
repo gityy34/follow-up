@@ -1,6 +1,7 @@
 import {
   stages, outcomes, priorities, reminders, categories, uuid, timezone, workspace, customer, followUp,
-  event, day, dateText, dateField, addDays, orderFollow, dayGroup, load, save, visible, report, encrypt, decrypt, validPhone
+  event, day, dateText, dateField, addDays, orderFollow, dayGroup, load, save, visible, report, encrypt, decrypt, validPhone,
+  periods, currencyCodes, entryOutcomes, pendingOutcomes, stageForOutcome, withOutcome, outcomeLabel, completeLinkedFollowUp, resolvePending
 } from './data.js';
 
 const view = document.querySelector('#view');
@@ -11,7 +12,7 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp
 const titles = {
   journey: 'Customer Journey', agenda: 'Follow-up Agenda', customers: 'Customers', detail: 'Customer Detail',
   edit: 'Customer', follow: 'Follow-up Detail', wizard: 'Add Follow-up', session: 'Start Call Session',
-  call: 'Post-Call Reflection', performance: 'Performance Coach', settings: 'Settings'
+  call: 'Post-Call Reflection', pending: 'Pending Calls', 'pending-result': 'Update Pending Call', performance: 'Performance Coach', settings: 'Settings'
 };
 const nav = [['journey','Journey','⌂'],['customers','Customers','♙'],['agenda','Agenda','▦'],['performance','Performance','↗']];
 const purposes = ['Discuss proposal','Confirm interest','Share product info','Address concern / issue','Agree next step','Other'];
@@ -32,10 +33,10 @@ let undo;
 let toastTimer;
 let pendingRestore;
 let pendingSafety;
-let period = 7;
+let period = 'today';
+let pendingDraft;
 let limit = 40;
 const filters = { q: '', status: 'OPEN', range: 'All dates', date: day(), priority: 'ANY', archive: 'active' };
-const stagesForOutcome = { RESOLVED:'RESOLVED',FOLLOW_UP:'FOLLOW_UP',ISSUE:'FOLLOW_UP',HANG_UP:'CONTACTED',NO_ANSWER:'CONTACTED' };
 const button = (text, action, id = '', kind = 'outline') =>
   `<button type="button" class="${kind}" data-action="${action}"${id ? ` data-id="${escape(id)}"` : ''}>${escape(text)}</button>`;
 const chip = (text, style = '') => `<span class="chip ${style}">${escape(text)}</span>`;
@@ -100,7 +101,7 @@ function startWizard(customerId = '', previous = null, sourceCall = '', returnPa
   go('wizard', previous?.id);
 }
 function startCall(customerId, followId = '') {
-  call = { id: uuid(), customerId, followId, started: 0, ended: 0, outcome: '', issue: categories[0], note: '', reflection: '' };
+  call = { id: uuid(), customerId, followId, started: 0, ended: 0, outcome: '', issue: categories[0], note: '', reflection: '', amount: '', more: false };
   go('call',customerId);
 }
 function applyTheme() {
@@ -121,7 +122,7 @@ function render() {
   const screens = {
     journey: () => journey(w), agenda: () => agenda(w), customers: () => customers(w), session: () => customers(w,true),
     edit: () => customerForm(owner(selected)), detail: () => detail(owner(selected),w), follow: () => followDetail(follow(selected)),
-    wizard: () => wizardScreen(w), call: callScreen, performance: () => performance(w), settings
+    wizard: () => wizardScreen(w), call: callScreen, pending: () => pendingList(w), 'pending-result': pendingScreen, performance: () => performance(w), settings
   };
   view.innerHTML = (initializationError ? '<p class="card error">Saved records could not be loaded. Editing is paused to protect your data.</p>' : '') + screens[page]();
   requestAnimationFrame(() => { drawRoad(); drawTrend(w); updateTimer(); });
@@ -140,18 +141,20 @@ function journey(w) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning!' : hour < 18 ? 'Good afternoon!' : 'Good evening!';
   const check = Object.entries(stages).map(([id,label]) => `<div class="checkpoint"><span>${label}</span><b>${active.filter(c => c.stage === id).length}</b></div>`).join('');
-  return `<div class="columns"><div class="stack"><section class="hero"><canvas id="road" aria-hidden="true"></canvas>
+  const pending = w.calls.filter(c => c.outcome === 'PENDING').length;
+  return `<div class="stack"><div class="columns"><div class="stack"><div class="stats call-stats">
+    ${metric('Today’s call goal',w.settings.goal,'◎')}${metric('Calls made today',calls.length,'☎')}</div>
+    <div class="actions">${button('Start Call Session','session','','button')}${button('Pending Calls ('+pending+')','pending-list')}</div>
+    </div><section class="card"><h2>Deal Summary</h2>${periodPicker()}${dealSummary(report(w,period,time).deals)}</section></div>
+    <div class="columns"><div class="stack"><section class="hero"><canvas id="road" aria-hidden="true"></canvas>
       <h2>${greeting}</h2><p>Here’s your customer journey today.</p><div class="checkpoints">${check}</div></section>
-    <section class="card"><div class="line"><span class="glyph-box" aria-hidden="true">◎</span><div class="grow"><h2>Today’s Mission</h2>
-      <p class="note">Complete ${w.settings.goal} calls today.</p></div><b>${calls.length} / ${w.settings.goal}</b></div>
-      <progress aria-label="Daily call goal" value="${Math.min(calls.length,w.settings.goal)}" max="${w.settings.goal}"></progress></section>
-    <div class="stats">${metric('Calls completed',calls.length,'☎')}${metric('Follow-ups due',due,'▦')}${metric('Needs review',review,'⚑')}</div>
+    <div class="stats call-stats">${metric('Follow-ups due',due,'▦')}${metric('Needs review',review,'⚑')}</div>
     </div><div class="stack"><section class="card"><h2>Next Best Action</h2><p>${soon ? escape(owner(soon.customerId)?.displayName + ' · ' + soon.purpose) : 'Add a customer and schedule your next call.'}</p>
       <p>${chip(overdue + ' overdue','urgent')} ${chip((open.length-overdue) + ' upcoming')}</p>
       ${soon ? button('Open Follow-up','open-follow',soon.id,'button wide') : button('Add Customer','edit-customer','','button wide')}
-      <div class="actions">${button('Start Call Session','session')}${button('+ Add Follow-up','add-follow')}</div></section>
+      <div class="actions">${button('+ Add Follow-up','add-follow')}</div></section>
     <section class="card"><div class="card-head"><h2>Recent Activity</h2><button class="link" data-nav="agenda">Open Agenda</button></div>
-      ${list(w.timeline.slice(0,5).map(e => row(e.eventType, owner(e.customerId)?.displayName + ' · ' + dateText(e.eventTime), 'open-customer',e.customerId)), 'Saved activity will appear here.')}</section></div></div>`;
+      ${list(w.timeline.slice(0,5).map(e => row(e.eventType, owner(e.customerId)?.displayName + ' · ' + dateText(e.eventTime), 'open-customer',e.customerId)), 'Saved activity will appear here.')}</section></div></div></div>`;
 }
 function canvas(id) {
   const el = query(id);
@@ -274,6 +277,32 @@ function wizardScreen(w) {
   return `<div class="narrow stack"><div class="stepbar">${stepBar}</div><form class="card stack" data-form="wizard">${section}
     <button class="button">${step === 2 ? 'Save Follow-up' : 'Next ›'}</button></form></div>`;
 }
+function outcomeOptions(ids, selected, name) {
+  return `<div class="result">${ids.map(id => `<label class="radio"><input type="radio" name="${name}" value="${id}"
+    required ${id === selected ? 'checked' : ''}>${outcomes[id]}</label>`).join('')}</div>`;
+}
+function amountField(amount) {
+  return input(`Deal amount (${escape(data.settings.currency)})`, 'amount', amount,
+    'inputmode="decimal" required placeholder="1250.50" autocomplete="off"');
+}
+function pendingList(w) {
+  const items = w.calls.filter(c => c.outcome === 'PENDING').sort((a,b) => b.endedAt - a.endedAt);
+  return `<section class="card narrow"><h2>Pending Calls (${items.length})</h2>
+    ${list(items.slice(0,limit).map(c => row(owner(c.customerId)?.displayName ?? '', 'Call made · '+dateText(c.endedAt),
+      'open-pending',c.id)), 'No pending calls. Calls saved as Pending will appear here.')}
+    ${items.length > limit ? button('Show more','more') : ''}</section>`;
+}
+function pendingScreen() {
+  const saved = data.calls.find(c => c.id === selected && c.outcome === 'PENDING');
+  if (!saved) return '<p class="card">This call no longer needs a result.</p>';
+  if (pendingDraft?.id !== selected) pendingDraft = { id:selected, outcome:'', amount:'' };
+  return `<div class="stack narrow"><section class="card"><h2>${escape(owner(saved.customerId)?.displayName ?? '')}</h2>
+    <p class="note">Call made · ${dateText(saved.endedAt)}</p><p class="note">${escape(saved.summaryNote)}</p></section>
+    <form class="card stack" data-form="pending"><h2>Final Outcome</h2>
+    ${outcomeOptions(pendingOutcomes,pendingDraft.outcome,'pendingOutcome')}
+    ${pendingDraft.outcome === 'RESOLVED' ? amountField(pendingDraft.amount) : ''}
+    <button class="button">Save Result</button></form></div>`;
+}
 function callScreen() {
   const c = owner(call?.customerId);
   if (!c) return '<p class="card">Choose a customer to log a call.</p>';
@@ -283,10 +312,13 @@ function callScreen() {
     <div class="actions">${c.phoneNumber ? `<a class="button" href="tel:${escape(c.phoneNumber.replace(/[^+\d]/g,''))}">Open Phone Dialer</a>` : ''}
       ${button(call.started && !call.ended ? 'Stop Timer' : 'Start Timer','timer')}<span id="timer" class="chip" aria-label="Call timer">00:00</span></div></section>
     <form class="card stack" data-form="call"><div><h2>Call Outcome</h2><p class="note">What was the result of this call?</p></div>
-    <div class="result">${Object.entries(outcomes).map(([id,name]) => `<label class="radio"><input type="radio" name="outcome" value="${id}" required ${id === call.outcome ? 'checked' : ''}>${name}</label>`).join('')}</div>
+    ${outcomeOptions(entryOutcomes.slice(0,2),call.outcome,'outcome')}
+    ${button(call.more ? 'Fewer outcomes' : 'More outcomes','more-outcomes','','link')}
+    ${call.more ? outcomeOptions(entryOutcomes.slice(2),call.outcome,'outcome') : ''}
+    ${call.outcome === 'RESOLVED' ? amountField(call.amount) : ''}
     ${call.outcome === 'ISSUE' ? select('Issue category','issue',prefs(categories),call.issue) : ''}
     ${area('What went well?','note',call.note,200)}${area('What can I improve next time?','reflection',call.reflection,200)}
-    <button class="button">✓ Save Reflection</button></form></div>`;
+    <button class="button">${call.outcome === 'PENDING' ? 'Save as Pending' : 'Save Call Result'}</button></form></div>`;
 }
 function updateTimer() {
   const item = query('#timer');
@@ -294,17 +326,26 @@ function updateTimer() {
   const seconds = Math.max(0,Math.floor(((call.ended || Date.now()) - call.started)/1000));
   item.textContent = [Math.floor(seconds/60),seconds%60].map(n => String(n).padStart(2,'0')).join(':');
 }
+function periodPicker() {
+  return `<div class="periods" role="group" aria-label="Report period">${Object.entries(periods).map(([id,label]) =>
+    `<button class="outline" data-action="period" data-id="${id}" aria-pressed="${period === id}">${label}</button>`).join('')}</div>`;
+}
+function dealSummary(totals) {
+  const items = Object.entries(totals.amounts);
+  return `<p>${totals.successful} successful deals</p>${items.length ? items.map(([currency,amount]) =>
+    `<p class="deal-value">${escape(currency)} ${escape(amount)}</p>`).join('') : '<p class="note">No deal amounts recorded.</p>'}`;
+}
 function performance(w) {
   const r = report(w,period);
   const totalIssues = r.issues.reduce((sum, [,n]) => sum+n,0);
-  return `<div class="columns"><div class="stack"><section class="card">${select('Report period','period',{'1':'Today','7':'Last 7 days','30':'Last 30 days'},String(period),'data-setting')}
+  return `<div class="columns"><div class="stack"><section class="card">${periodPicker()}
     <h2>Your Performance</h2><div class="stats">${metric('Calls',r.calls,'☎')}${metric('Follow-ups',r.scheduled,'↗')}${metric('Resolved',r.counts.RESOLVED,'✓')}</div>
     <p>${r.success}% success rate · ${r.completion}% follow-up completion rate</p>
     <p class="note">Best calling hour · ${r.best == null ? 'Need successful calls' : String(r.best).padStart(2,'0')+':00'}</p>
     <p class="note">${Object.entries(outcomes).filter(([id]) => id !== 'RESOLVED').map(([id,label]) => escape(label)+': '+r.counts[id]).join(' · ')}</p></section>
     <section class="card"><h2>Journey Trend</h2><canvas id="trend" role="img" aria-label="${escape(r.trend.map(([d,n]) => d+': '+n).join(', '))}"></canvas>
-    <p class="note">${r.trend.at(0)[0]} – ${r.trend.at(-1)[0]} · Calls per day</p></section></div>
-    <div class="stack"><section class="card"><h2>Issue Clusters</h2>${r.issues.length ? r.issues.map(([issue,n]) => `<p>${escape(issue)} · ${n}</p>
+    <p class="note">${r.trend.at(0)[0]} – ${r.trend.at(-1)[0]} · ${period === '24h' ? 'Calls per six-hour interval' : 'Calls per day'}</p></section></div>
+    <div class="stack"><section class="card"><h2>Deal Summary</h2>${dealSummary(r.deals)}</section><section class="card"><h2>Issue Clusters</h2>${r.issues.length ? r.issues.map(([issue,n]) => `<p>${escape(issue)} · ${n}</p>
       <progress value="${n}" max="${totalIssues}" aria-label="${escape(issue)}"></progress>`).join('') : '<p class="note">No issues in this period.</p>'}</section>
     <section class="card"><h2>Coach Recommendations</h2>${r.tips.map(t => `<p>✓ ${escape(t)}</p>`).join('')}</section></div></div>`;
 }
@@ -332,8 +373,9 @@ function settings() {
   return `<div class="narrow stack"><section class="card"><h2>Appearance</h2><div class="fields">
     ${select('Theme','themeMode',{SYSTEM:'System',LIGHT:'Light',DARK:'Dark'},s.themeMode,'data-setting')}
     ${select('Palette','selectedPalette',prefs(['Violet','Ocean','Forest']),s.selectedPalette,'data-setting')}
+    ${select('Deal currency','currency',prefs([...new Set([...currencyCodes,s.currency])]),s.currency,'data-setting')}
     ${select('Daily goal','goal',prefs([...new Set([1,3,5,10,15,20,30,50,s.goal])].map(String)),String(s.goal),'data-setting')}</div>
-    <p class="note">Custom layout presets · Coming Soon</p></section>
+    <p class="note">Existing deals keep the currency recorded when saved.</p><p class="note">Custom layout presets · Coming Soon</p></section>
     <section class="card"><h2>Encrypted Backup</h2><p class="note">Keep an external backup before clearing browser data or changing devices.</p>
     <p class="note">${s.lastExport ? 'Last verified export · '+dateText(s.lastExport) : 'No verified export yet.'}</p>
     <div class="actions">${button('Export Backup','export-backup','','button')}${button('Import Backup','import-backup')}</div></section>
@@ -431,6 +473,14 @@ const actions = {
   'add-follow': id => startWizard(id),
   'edit-follow': id => { const f = follow(id); if (f) startWizard(f.customerId,f); },
   session: () => go('session'),
+  'pending-list': () => go('pending'),
+  'open-pending': id => { pendingDraft = { id, outcome:'', amount:'' }; go('pending-result',id); },
+  'more-outcomes': () => {
+    call.more = !call.more;
+    if (!call.more && !entryOutcomes.slice(0,2).includes(call.outcome)) call.outcome = '';
+    render();
+  },
+  period: id => { if (Object.hasOwn(periods,id)) { period=id; render(); } },
   'start-call': id => startCall(id),
   'start-follow-call': id => { const f = follow(id); if (f) startCall(f.customerId,id); },
   tab: id => { tab = id; limit = 40; render(); },
@@ -531,27 +581,29 @@ const forms = {
     wizard = null;
     go(returnPage === 'wizard' ? 'agenda' : returnPage, returnId, true);
   },
-  call: () => {
+  call: values => {
     if (!call?.outcome) throw new Error('Choose a call outcome.');
     const { id,customerId,outcome,issue,note,reflection,followId,started } = call;
     const end = call.ended || Date.now();
     write(next => {
       const c = next.customers.find(c => c.id === customerId);
       if (!c || c.archived || next.calls.some(c => c.id === id)) throw new Error('This call is unavailable.');
-      const saved = { id,customerId,startedAt:started || end,endedAt:end,outcome,issueCategory:outcome === 'ISSUE' ? issue : '',
-        summaryNote:note.trim(),reflection:reflection.trim(),followUpId:followId || null,createdAt:Date.now() };
+      const saved = withOutcome({ id,customerId,startedAt:Math.min(started || end,end),endedAt:end,issueCategory:outcome === 'ISSUE' ? issue : '',
+        summaryNote:note.trim(),reflection:reflection.trim(),followUpId:followId || null,createdAt:Date.now() },outcome,values.amount,next.settings.currency);
       next.calls.unshift(saved);
-      c.stage = stagesForOutcome[outcome]; c.updatedAt = Date.now();
-      event(next,c.id,'Call logged',id,[outcomes[outcome],saved.issueCategory,saved.summaryNote,saved.reflection && 'Improve next time: '+saved.reflection].filter(Boolean).join(' · '));
-      const row = next.followUps.find(f => f.id === followId && f.status === 'OPEN');
-      if (row && outcome === 'RESOLVED') {
-        row.status = 'DONE'; row.updatedAt = Date.now();
-        event(next,c.id,'Follow-up completed',row.id,row.purpose);
-      }
+      c.stage = stageForOutcome[outcome]; c.updatedAt = Date.now();
+      event(next,c.id,'Call logged',id,[outcomeLabel(saved),saved.issueCategory,saved.summaryNote,saved.reflection && 'Improve next time: '+saved.reflection].filter(Boolean).join(' · '));
+      completeLinkedFollowUp(next,saved);
     },'Call result saved.');
     call = null;
+    if (outcome === 'PENDING') { go('pending','',true); return; }
     go('detail',customerId,true);
     if (outcome === 'FOLLOW_UP') startWizard(customerId,null,id,'detail');
+  },
+  pending: values => {
+    write(next => resolvePending(next,selected,pendingDraft.outcome,values.amount,next.settings.currency),'Call result updated.');
+    pendingDraft = null;
+    go('pending','',true);
   },
   'backup-export': async values => {
     if (values.password !== values.confirmation) throw new Error('Passphrases must match.');
@@ -610,7 +662,8 @@ document.addEventListener('input', e => {
     if (el.name === 'dueAt') f.dueAt = new Date(el.value).getTime();
     if (el.name === 'customReminderAt') f.customReminderAt = new Date(el.value).getTime();
   }
-  if (page === 'call' && call && ['note','reflection','issue'].includes(el.name)) call[el.name]=el.value;
+  if (page === 'call' && call && ['note','reflection','issue','amount'].includes(el.name)) call[el.name]=el.value;
+  if (page === 'pending-result' && el.name === 'amount' && pendingDraft) pendingDraft.amount=el.value;
 });
 document.addEventListener('change', e => {
   const el = e.target;
@@ -624,8 +677,7 @@ document.addEventListener('change', e => {
       render();
     }
     if (el.dataset.setting !== undefined) {
-      if (el.name === 'period') period=Number(el.value);
-      else write(next => { next.settings[el.name]=['goal','retentionDays'].includes(el.name) ? Number(el.value) : el.value; },'Settings saved.');
+      write(next => { next.settings[el.name]=['goal','retentionDays'].includes(el.name) ? Number(el.value) : el.value; },'Settings saved.');
       render();
     }
     if (page === 'wizard' && el.name === 'purposeChoice') {
@@ -638,6 +690,7 @@ document.addEventListener('change', e => {
       render();
     }
     if (page === 'call' && el.name === 'outcome') { call.outcome=el.value; render(); }
+    if (page === 'pending-result' && el.name === 'pendingOutcome') { pendingDraft.outcome=el.value; render(); }
   } catch (error) { tell(error.message || 'The change could not be saved.'); }
 });
 document.addEventListener('submit', async e => {
@@ -673,4 +726,4 @@ window.addEventListener('storage', e => {
 fetch('downloads/android-builds.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(meta=>{ downloads=meta?.androidApks===true; }).catch(()=>{});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 const initial = location.hash.slice(1);
-go(['journey','agenda','customers','performance','settings'].includes(initial) ? initial : 'journey','',true);
+go(['journey','agenda','customers','performance','settings','pending'].includes(initial) ? initial : 'journey','',true);

@@ -4,9 +4,11 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.math.BigDecimal
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+import java.util.Currency
 import java.util.UUID
 
 internal fun uuid() = UUID.randomUUID().toString()
@@ -15,7 +17,8 @@ internal fun zone() = ZoneId.systemDefault()
 
 enum class Outcome(val title: String) {
     RESOLVED("Successful / Resolved"), FOLLOW_UP("Follow-up Needed"), HANG_UP("Hang-up"),
-    NO_ANSWER("No Answer"), ISSUE("Issue / Escalation")
+    NO_ANSWER("No Answer"), ISSUE("Issue / Escalation"),
+    PENDING("Pending"), CANCELLED("Cancelled"), OTHER("Other")
 }
 
 enum class Priority(val title: String) { NORMAL("Normal"), HIGH("High priority"), URGENT("Urgent") }
@@ -88,7 +91,10 @@ data class CallLog(
     val summaryNote: String = "",
     val reflection: String = "",
     val followUpId: String? = null,
-    val createdAt: Long = now()
+    val createdAt: Long = now(),
+    val dealAmount: String? = null,
+    val dealCurrency: String? = null,
+    val outcomeAt: Long? = null
 )
 
 @Entity(
@@ -120,7 +126,8 @@ data class AppSettings(
     val retentionDays: Int = 90,
     val lastExport: Long = 0,
     val exportLabel: String = "",
-    val onboardingDone: Boolean = false
+    val onboardingDone: Boolean = false,
+    val currency: String = "PKR"
 )
 
 data class Workspace(
@@ -133,8 +140,8 @@ data class Workspace(
 
 fun stageAfter(outcome: Outcome) = when (outcome) {
     Outcome.RESOLVED -> Stage.RESOLVED
-    Outcome.FOLLOW_UP, Outcome.ISSUE -> Stage.FOLLOW_UP
-    Outcome.HANG_UP, Outcome.NO_ANSWER -> Stage.CONTACTED
+    Outcome.FOLLOW_UP, Outcome.ISSUE, Outcome.PENDING -> Stage.FOLLOW_UP
+    Outcome.HANG_UP, Outcome.NO_ANSWER, Outcome.CANCELLED, Outcome.OTHER -> Stage.CONTACTED
 }
 
 fun validCustomer(name: String, phone: String): Boolean =
@@ -154,24 +161,77 @@ fun reminderTime(row: FollowUp, default: Reminder): Long? {
     }
 }
 
+private val decimalInput = Regex("(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)")
+private val groupedInput = Regex("[0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]*)?")
+private val commaDecimal = Regex("[0-9]*,[0-9]+")
+
+fun normalizeAmount(raw: String): String? {
+    val normalized = raw.trim().map {
+        when (it) {
+            '٫' -> '.'
+            '٬' -> ','
+            else -> it.digitToIntOrNull()?.digitToChar() ?: it
+        }
+    }.joinToString("")
+    val decimal = when {
+        decimalInput.matches(normalized) -> normalized
+        groupedInput.matches(normalized) -> normalized.replace(",", "")
+        commaDecimal.matches(normalized) -> normalized.replace(',', '.')
+        else -> return null
+    }
+    return decimal.toBigDecimalOrNull()?.toPlainString()
+}
+
+internal val currencyCodes by lazy {
+    Currency.getAvailableCurrencies().map { it.currencyCode }.sorted()
+}
+internal fun validCurrency(code: String) = code.length == 3 && code.all { it in 'A'..'Z' }
+
+internal val pendingOutcomes = listOf(Outcome.RESOLVED, Outcome.CANCELLED, Outcome.OTHER)
+internal val entryOutcomes = listOf(Outcome.RESOLVED, Outcome.PENDING, Outcome.FOLLOW_UP,
+    Outcome.HANG_UP, Outcome.NO_ANSWER, Outcome.ISSUE, Outcome.CANCELLED, Outcome.OTHER)
+
+enum class ReportPeriod(val title: String, val days: Int) {
+    TODAY("Today", 1), LAST_24_HOURS("Last 24 Hours", 1), LAST_7_DAYS("Last 7 Days", 7), LAST_30_DAYS("Last 30 Days", 30)
+}
+
+data class DealTotals(val successful: Int, val amounts: Map<String, String>)
+
+fun dealTotals(calls: Iterable<CallLog>, start: Long, end: Long): DealTotals {
+    val totals = sortedMapOf<String, BigDecimal>()
+    var successful = 0
+    for (call in calls) {
+        if (call.outcome != Outcome.RESOLVED || (call.outcomeAt ?: call.endedAt) !in start until end) continue
+        successful++
+        val amount = call.dealAmount?.toBigDecimalOrNull() ?: continue
+        val currency = call.dealCurrency ?: continue
+        totals[currency] = (totals[currency] ?: BigDecimal.ZERO).add(amount)
+    }
+    return DealTotals(successful, totals.mapValues { it.value.toPlainString() })
+}
+
 data class Report(
     val calls: Int, val countByOutcome: Map<Outcome, Int>, val completed: Int, val scheduled: Int,
     val issues: Map<String, Int>, val bestHour: Int?, val trend: List<Pair<String, Int>>,
-    val tips: List<String>
+    val tips: List<String>, val deals: DealTotals
 ) {
     val resolved get() = countByOutcome[Outcome.RESOLVED] ?: 0
     val successRate get() = if (calls == 0) 0 else 100 * resolved / calls
     val completionRate get() = if (scheduled == 0) 0 else 100 * completed / scheduled
 }
 
-fun report(workspace: Workspace, days: Int, time: Long, timezone: ZoneId, demo: Boolean = false): Report {
+fun report(workspace: Workspace, period: ReportPeriod, time: Long, timezone: ZoneId, demo: Boolean = false): Report {
+    val days = period.days
     val endDate = Instant.ofEpochMilli(time).atZone(timezone).toLocalDate()
     val first = endDate.minusDays(days.toLong() - 1)
-    val start = first.atStartOfDay(timezone).toInstant().toEpochMilli()
-    val end = endDate.plusDays(1).atStartOfDay(timezone).toInstant().toEpochMilli()
+    val start = if (period == ReportPeriod.LAST_24_HOURS) time - 86_400_000L
+        else first.atStartOfDay(timezone).toInstant().toEpochMilli()
+    val calendarEnd = endDate.plusDays(1).atStartOfDay(timezone).toInstant().toEpochMilli()
+    val callEnd = minOf(calendarEnd, time + 1)
     val real = workspace.customers.filter { it.demo == demo }.mapTo(hashSetOf()) { it.id }
-    val calls = workspace.calls.filter { it.customerId in real && it.endedAt in start until end }
-    val due = workspace.followUps.filter { it.customerId in real && it.dueAt in start until end && it.status != FollowStatus.DELETED }
+    val calls = workspace.calls.filter { it.customerId in real && it.endedAt in start until callEnd }
+    val dueEnd = if (period == ReportPeriod.LAST_24_HOURS) callEnd else calendarEnd
+    val due = workspace.followUps.filter { it.customerId in real && it.dueAt in start until dueEnd && it.status != FollowStatus.DELETED }
     val outcomes = calls.groupingBy { it.outcome }.eachCount()
     val issues = calls.filter { it.outcome == Outcome.ISSUE }.groupingBy { it.issueCategory.ifBlank { "Uncategorized" } }.eachCount()
     val best = calls.filter { it.outcome == Outcome.RESOLVED }.groupingBy {
@@ -179,7 +239,14 @@ fun report(workspace: Workspace, days: Int, time: Long, timezone: ZoneId, demo: 
     }.eachCount().entries.sortedWith(compareByDescending<Map.Entry<Int, Int>> { it.value }.thenBy { it.key }).firstOrNull()?.key
     val completed = due.count { it.status == FollowStatus.DONE }
     val countByDate = calls.groupingBy { Instant.ofEpochMilli(it.endedAt).atZone(timezone).toLocalDate() }.eachCount()
-    val trend = (0 until days).map { first.plusDays(it.toLong()) }.map {
+    val trend = if (period == ReportPeriod.LAST_24_HOURS) {
+        (0..3).map { slot ->
+            val slotStart = start + slot * 21_600_000L
+            val label = Instant.ofEpochMilli(slotStart).atZone(timezone)
+                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm", java.util.Locale.ENGLISH))
+            label to calls.count { it.endedAt >= slotStart && (slot == 3 || it.endedAt < slotStart + 21_600_000L) }
+        }
+    } else (0 until days).map { first.plusDays(it.toLong()) }.map {
         it.format(java.time.format.DateTimeFormatter.ofPattern(if (days <= 7) "EEE" else "MMM d", java.util.Locale.ENGLISH)) to (countByDate[it] ?: 0)
     }
     val tips = buildList {
@@ -189,5 +256,6 @@ fun report(workspace: Workspace, days: Int, time: Long, timezone: ZoneId, demo: 
         best?.let { add("Use your strongest calling hour for high-priority customers.") }
         if (isEmpty()) add("Log each outcome and write one clear next action after every call.")
     }.take(3)
-    return Report(calls.size, outcomes, completed, due.size, issues, best, trend, tips)
+    val deals = dealTotals(workspace.calls.filter { it.customerId in real }, start, callEnd)
+    return Report(calls.size, outcomes, completed, due.size, issues, best, trend, tips, deals)
 }
