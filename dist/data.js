@@ -3,7 +3,11 @@ export const outcomes = { RESOLVED: 'Successful / Resolved', FOLLOW_UP: 'Follow-
 export const priorities = { NORMAL: 'Normal', HIGH: 'High priority', URGENT: 'Urgent' };
 export const reminders = { DEFAULT: 'Default', DAY: 'One day before', SAME_DAY: 'Same day at 9 AM', HOUR: 'One hour before', SHORT: '15 minutes before', CUSTOM: 'Custom date and time', OFF: 'Off' };
 export const categories = ['Waiting for customer decision', 'Need more information', 'Price / budget concerns', 'Technical issue', 'Other'];
-export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false };
+export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false, profileReview: 0, photo: '', font: 'DEFAULT' };
+export const profileReview = 1;
+export const fonts = { DEFAULT: 'App default', DEVICE: 'Device font', MODERN: 'Manrope', EDITORIAL: 'Serif', MONO: 'Monospace' };
+export const validPhoto = photo => typeof photo === 'string' && photo.length >= 4 && photo.length <= 90000 &&
+  photo.length % 4 === 0 && photo.startsWith('/9j/') && /^[A-Za-z0-9+/=]+$/.test(photo);
 const key = 'you-follow-ups.v1';
 export const uuid = () => crypto.randomUUID();
 export const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -271,6 +275,9 @@ export function validate(data) {
   unique(data.timeline, e => records.has(e.customerId) && text(e.eventType,120) && text(e.referenceId,120) && typeof e.displayPayload === "string" && time(e.eventTime));
   const settings = { ...defaults, ...data.settings };
   if (settings.themeMode === 'SYSTEM' && !Object.hasOwn(data.settings ?? {},'profileConfigured')) settings.themeMode = 'NEON';
+  if (!validPhoto(settings.photo)) settings.photo = '';
+  if (!Object.hasOwn(fonts,settings.font)) settings.font = 'DEFAULT';
+  if (!Number.isInteger(settings.profileReview) || settings.profileReview < 0) settings.profileReview = 0;
   if (!['NEON','SYSTEM','LIGHT','DARK'].includes(settings.themeMode) || !['Violet','Ocean','Forest'].includes(settings.selectedPalette) ||
       !Number.isInteger(settings.goal) || settings.goal < 1 || settings.goal > 500 || !Number.isInteger(settings.retentionDays) ||
       settings.retentionDays < 1 || settings.retentionDays > 3650 || !validCurrency(settings.currency) || !text(settings.operatorName,60) ||
@@ -340,7 +347,7 @@ export async function encrypt(data, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const raw = JSON.stringify(data);
-  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.3.1' };
+  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.4.0' };
   const payload = encoder.encode(JSON.stringify({ manifest, data: raw }));
   if (payload.length > 100 * 1024 * 1024) throw new Error('Backup is too large.');
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password, salt), payload);

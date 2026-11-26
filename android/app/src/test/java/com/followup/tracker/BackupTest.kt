@@ -36,4 +36,17 @@ class BackupTest {
         val workspace = state.copy(calls = listOf(pending, resolved), settings = state.settings.copy(currency = "USD", operatorName = "Uzair", displayName = "My work", profileConfigured = true))
         assertEquals(workspace, BackupCodec.import(BackupCodec.export(workspace, pass).inputStream(), pass))
     }
+    @Test fun profileReviewFontAndThumbnailRoundTrip() {
+        val profile = AppSettings(operatorName = "Uzair", displayName = "Callx", profileReview = PROFILE_REVIEW,
+            profileConfigured = true, photo = "/9j/AA==", font = AppFont.MODERN)
+        assertEquals(profile, settingsFromJson(settingsJson(profile)))
+        val restored = BackupCodec.import(BackupCodec.export(Workspace(settings = profile), pass).inputStream(), pass)
+        assertEquals(profile, restored.settings)
+        val existing = settingsFromJson(org.json.JSONObject("""{"operatorName":"Uzair","profileConfigured":true}"""))
+        assertEquals("Uzair", existing.operatorName)
+        assertEquals(0, existing.profileReview)
+        assertEquals(AppFont.DEFAULT, existing.font)
+        assertFalse(isProfilePhoto("/9j/<svg>"))
+        assertFalse(isProfilePhoto("/9j/" + "A".repeat(90000)))
+    }
 }

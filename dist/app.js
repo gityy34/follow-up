@@ -2,7 +2,7 @@ import {
   stages, outcomes, priorities, reminders, categories, uuid, timezone, workspace, customer, followUp,
   event, day, dateText, dateField, addDays, orderFollow, dayGroup, load, save, visible, report, encrypt, decrypt, validPhone,
   periods, currencyCodes, entryOutcomes, pendingOutcomes, stageForOutcome, withOutcome, outcomeLabel, completeLinkedFollowUp, resolvePending,
-  greeting, journeySnapshot, remindersFor, reminderDays
+  greeting, journeySnapshot, remindersFor, reminderDays, profileReview, fonts, validPhoto
 } from './data.js';
 
 const view = document.querySelector('#view');
@@ -37,6 +37,8 @@ let pendingSafety;
 let period = 'today';
 let reminderDay = 'today';
 let initialProfile = false;
+let profileChoice = '';
+let roadIntroPlayed = false;
 let pendingDraft;
 let limit = 40;
 const filters = { q: '', status: 'OPEN', range: 'All dates', date: day(), priority: 'ANY', archive: 'active' };
@@ -58,6 +60,11 @@ const select = (label, name, map, value, attribute = '') => `<label>${label}<sel
 const input = (label, name, value = '', extra = '') => `<label>${label}<input name="${name}" value="${escape(value)}" ${extra}></label>`;
 const area = (label, name, value, max) => `<label>${label}<textarea name="${name}" maxlength="${max}">${escape(value)}</textarea></label>`;
 const prefs = value => Object.fromEntries(value.map(key => [key,key]));
+const profileAvatar = (settings, large = false) => {
+  const photo = validPhoto(settings.photo) ? `<img alt="Profile photo" src="data:image/jpeg;base64,${escape(settings.photo)}">` :
+    `<span aria-hidden="true">${escape(initials(settings.operatorName || settings.displayName) || 'UY')}</span>`;
+  return `<span class="profile-avatar${large ? ' profile-avatar-large' : ''}">${photo}</span>`;
+};
 const avatar = name => `<span class="avatar" aria-hidden="true">${escape(initials(name))}</span>`;
 const row = (name, sub, action, id, end = '›', before = '') =>
   `<button type="button" class="list-link" data-action="${action}" data-id="${escape(id)}">${before}<span class="grow"><strong>${escape(name)}</strong><small>${escape(sub)}</small></span>${end}</button>`;
@@ -116,6 +123,7 @@ function applyTheme() {
   const s = data.settings;
   document.documentElement.dataset.theme = (s.themeMode === 'NEON' || s.themeMode === 'DARK' || (s.themeMode === 'SYSTEM' && themeMedia.matches)) ? 'dark' : 'light';
   document.documentElement.dataset.palette = s.selectedPalette;
+  document.documentElement.dataset.font = s.font.toLowerCase();
 }
 function header(w, time) {
   const title = data.settings.displayName || 'Customer Journey';
@@ -124,12 +132,10 @@ function header(w, time) {
   const menu = dots('More options','<button type="button" data-nav="settings">Settings</button><button type="button" disabled>Help · Coming soon</button>');
   const tag = demo ? '<span class="chip">Demo</span>' : '';
   if (page === 'journey') {
-    const initialsText = initials(data.settings.operatorName || data.settings.displayName) || 'UY';
-    const hello = [greeting(time),data.settings.operatorName].filter(Boolean).join(', ');
     const date = new Intl.DateTimeFormat('en-GB',{ weekday:'short', month:'short', day:'numeric' }).format(time);
     const count = remindersFor(w,'today',time).length;
-    return `<div class="top-left"><span class="profile-avatar" aria-hidden="true">${escape(initialsText)}</span><div class="grow title-group">
-      <p class="greeting">${escape(hello)}</p><h1>${escape(title)}</h1><time datetime="${day(time)}">Today · ${date}</time></div></div>
+    return `<div class="top-left">${profileAvatar(data.settings)}<div class="grow title-group">
+      <h1>${escape(title)}</h1><time datetime="${day(time)}">${date}</time></div></div>
       <div class="top-right">${tag}<button type="button" class="icon-button reminder-button" data-action="reminders" aria-label="Reminders, ${count} today">
         ${icon('notifications')}${count ? `<span class="reminder-badge" aria-hidden="true">${count}</span>` : ''}</button>${menu}</div>`;
   }
@@ -167,20 +173,29 @@ function journey(w, time) {
   const checkpoint = (text,count,glyph,place) => `<div class="checkpoint checkpoint-${place}">
     <div class="checkpoint-label">${icon(glyph)}<div><span>${text}</span><b>${count}</b></div></div><i class="checkpoint-dot" aria-hidden="true"></i></div>`;
   const amounts = Object.entries(snapshot.deals.amounts);
+  const hello = [greeting(time),w.settings.operatorName].filter(Boolean).join(', ');
+  const animate = !roadIntroPlayed && w.settings.profileReview >= profileReview;
+  if (animate) roadIntroPlayed = true;
   const next = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN').sort(orderFollow)[0];
   const tiles = [['Calls',calls.length,'call','today-calls'],['Follow-ups',due,'calendar_month','today-agenda'],['Needs review',review,'flag','today-calls']];
+  const progress = Math.min(100,100 * calls.length / w.settings.goal);
   return `<div class="neon-dashboard"><section class="hero" aria-label="Customer journey, ${periods[period]}">
-    <div class="hero-copy"><h2>${greeting(time)}!</h2><p>${period === 'today' ? 'Here’s your customer journey today.' : 'Customer journey · ' + periods[period]}</p></div>
-    ${checkpoint('New',snapshot.newCustomers,'person_add','new')}${checkpoint('Contacted',snapshot.contacted,'call','contacted')}
-    ${checkpoint('Follow-up',snapshot.followUps,'calendar_month','follow')}${checkpoint('Resolved',snapshot.deals.successful,'check_circle','resolved')}
-    ${iconButton('more_vert','Select journey period','journey-period','road-more')}</section>
+    <div class="hero-copy"><h2>${escape(hello)}!</h2><p class="hero-period">${periods[period]}</p></div>
+    <div class="hero-map${animate ? ' hero-animate' : ''}">
+      ${checkpoint('New',snapshot.newCustomers,'person_add','new')}${checkpoint('Contacted',snapshot.contacted,'call','contacted')}
+      ${checkpoint('Follow-up',snapshot.followUps,'calendar_month','follow')}${checkpoint('Successful',snapshot.deals.successful,'check_circle','resolved')}
+      ${animate ? ['new','contacted','follow','resolved'].map(place => `<span aria-hidden="true" class="road-token road-token-${place}"></span>`).join('') : ''}
+      ${iconButton('more_vert','Select journey period','journey-period','road-more')}
+    </div></section>
     <div class="stack neon-summary">
-      <section class="card neon-payment"><h2>Deal amount</h2><div class="payment-values">${amounts.length ? amounts.map(([currency,amount]) =>
-        `<strong>${escape(currency)} ${escape(amount)}</strong>`).join('') : `<strong>${escape(w.settings.currency)} 0</strong>`}</div></section>
-      <section class="card neon-mission"><div class="mission-heading"><div class="line">${icon('track_changes')}<h2>Today’s Mission</h2></div>
-        ${dots('Mission options', `<button type="button" data-action="session">Start call session</button><button type="button" data-action="pending-list">Pending calls (${pending})</button><button type="button" data-nav="settings">Change call goal</button>`)}</div>
-        <p class="note">Complete ${w.settings.goal} calls today.</p><progress aria-label="Daily call goal" value="${Math.min(calls.length,w.settings.goal)}" max="${w.settings.goal}"></progress>
-        <p class="note">${calls.length} of ${w.settings.goal} calls completed</p></section>
+      <section class="mission-strip">
+        <div class="strip-deal"><h2>Deal amount</h2><div class="payment-values">${amounts.length ? amounts.map(([currency,amount]) =>
+          `<strong>${escape(currency)} ${escape(amount)}</strong>`).join('') : `<strong>${escape(w.settings.currency)} 0</strong>`}</div></div>
+        <div class="strip-mission"><span class="mission-ring" style="--progress:${progress}%" aria-hidden="true"></span>
+          <div><h2>Today’s mission</h2><strong>${calls.length} / ${w.settings.goal} calls</strong></div>
+          ${dots('Mission options', `<button type="button" data-action="session">Start call session</button><button type="button" data-action="pending-list">Pending calls (${pending})</button><button type="button" data-nav="settings">Change call goal</button>`)}
+        </div>
+      </section>
       <div class="stats">${tiles.map(([label,count,glyph,action]) => `<button type="button" class="metric neon-metric" data-action="${action}">${icon(glyph)}<b>${count}</b><span>${label}</span></button>`).join('')}</div>
       <details class="card neon-activity"><summary>Activity and next action</summary>
         <h2>Next Best Action</h2><p>${next ? escape((owner(next.customerId)?.displayName ?? '') + ' · ' + next.purpose) :
@@ -403,11 +418,16 @@ function drawTrend(w) {
 function settings() {
   const s = data.settings;
   return `<div class="narrow stack"><section class="card"><h2>Profile</h2>
+    ${profileAvatar(s)}
     <p>${escape(s.operatorName || 'Your name has not been set.')}</p>
     <p class="note">${escape(s.displayName || 'Customer Journey')}</p>
-    ${button('Edit name and display','edit-profile')}</section><section class="card"><h2>Appearance</h2><div class="fields">
+    <div class="actions">${button('Edit name and display','edit-profile')}
+      ${button(s.photo ? 'Change profile photo' : 'Upload profile photo','choose-profile-photo')}
+      ${s.photo ? button('View profile photo','view-profile-photo') : ''}</div>
+    <input id="profile-photo-file" type="file" accept="image/*" hidden></section><section class="card"><h2>Appearance</h2><div class="fields">
     ${select('Theme','themeMode',{NEON:'Neon',SYSTEM:'System',LIGHT:'Light',DARK:'Dark'},s.themeMode,'data-setting')}
     ${select('Palette','selectedPalette',prefs(['Violet','Ocean','Forest']),s.selectedPalette,'data-setting')}
+    ${select('Font','font',fonts,s.font,'data-setting')}
     ${select('Deal currency','currency',prefs([...new Set([...currencyCodes,s.currency])]),s.currency,'data-setting')}
     ${select('Daily goal','goal',prefs([...new Set([1,3,5,10,15,20,30,50,s.goal])].map(String)),String(s.goal),'data-setting')}</div>
     <p class="note">Existing deals keep the currency recorded when saved.</p><p class="note">Custom layout presets · Coming Soon</p></section>
@@ -428,22 +448,50 @@ function openModal(title, body) {
   modal.innerHTML = `<div class="stack"><h2 id="modal-title">${escape(title)}</h2>${body}</div>`;
   if (!modal.open) modal.showModal();
 }
-function openProfile(initial) {
+function openProfile(initial, choice = '') {
   initialProfile = initial;
+  profileChoice = choice;
   const s = data.settings;
-  openModal(initial ? 'Make it yours' : 'Edit profile',`<form class="stack" data-form="profile">
-    ${input('Your name','operatorName',s.operatorName, 'maxlength="60" autocomplete="given-name" ' + (initial ? 'required' : ''))}
-    ${input('Dashboard display name (optional)','displayName',s.displayName, 'maxlength="60" autocomplete="off"')}
+  if (initial && !choice) {
+    openModal('Set up your profile',
+      button('New profile','setup-new','','button') + button('Use existing profile','setup-existing') + button('Not now','skip-profile','','link'));
+    return;
+  }
+  const useSaved = choice !== 'new';
+  openModal(initial ? (useSaved ? 'Confirm your profile' : 'New profile') : 'Edit profile',`<form class="stack" data-form="profile">
+    ${input('Your name','operatorName',useSaved ? s.operatorName : '', 'maxlength="60" autocomplete="given-name" ' + (initial ? 'required' : ''))}
+    ${input('Dashboard display title (optional)','displayName',useSaved ? s.displayName : '', 'maxlength="60" autocomplete="off"')}
     <p data-error class="error" role="alert"></p>
-    <div class="actions">${button(initial ? 'Not now' : 'Cancel',initial ? 'skip-profile' : 'close-modal')}<button class="button">Save</button></div>
+    <div class="actions">${button(initial ? 'Back' : 'Cancel',initial ? 'setup-back' : 'close-modal')}<button class="button">Save</button></div>
   </form>`);
 }
 
-function saveProfile(name, display, message) {
-  write(next => Object.assign(next.settings,{operatorName:name,displayName:display,profileConfigured:true}),message);
+function saveProfile(name, display, message, replacePhoto = false) {
+  write(next => {
+    Object.assign(next.settings,{operatorName:name,displayName:display,profileConfigured:true,profileReview});
+    if (replacePhoto) next.settings.photo='';
+  },message);
   initialProfile = false;
+  profileChoice = '';
   modal.close();
   render();
+}
+
+async function prepareProfilePhoto(file) {
+  if (!file || file.size > 30000000) throw new Error('Choose an image smaller than 30 MB.');
+  const image = await createImageBitmap(file,{imageOrientation:'from-image'});
+  try {
+    const surface = document.createElement('canvas');
+    surface.width = surface.height = 192;
+    const context = surface.getContext('2d');
+    const size = Math.min(image.width,image.height);
+    context.fillStyle = '#202440';
+    context.fillRect(0,0,192,192);
+    context.drawImage(image,(image.width-size)/2,(image.height-size)/2,size,size,0,0,192,192);
+    const photo = surface.toDataURL('image/jpeg',.87).split(',')[1];
+    if (!validPhoto(photo)) throw new Error('This image could not be prepared.');
+    return photo;
+  } finally { image.close(); }
 }
 
 function confirmAction(title, detail, action) {
@@ -521,7 +569,12 @@ function mutateFollow(f) {
 const actions = {
   back: handleBack,
   'edit-profile': () => openProfile(false),
-  'skip-profile': () => saveProfile('','',''),
+  'setup-new': () => openProfile(true,'new'),
+  'setup-existing': () => openProfile(true,'existing'),
+  'setup-back': () => openProfile(true),
+  'skip-profile': () => saveProfile(data.settings.operatorName,data.settings.displayName,''),
+  'choose-profile-photo': () => query('#profile-photo-file')?.click(),
+  'view-profile-photo': () => openModal('Profile photo',profileAvatar(data.settings,true)+button('Close','close-modal')),
   'journey-period': () => openModal('Journey period', periodPicker()),
   reminders: () => { reminderDay = 'today'; go('reminders'); },
   'reminder-period': () => openModal('Reminder day', `<div class="periods" role="group" aria-label="Reminder day">
@@ -623,7 +676,7 @@ const forms = {
   profile: values => {
     const name = values.operatorName.trim().slice(0,60);
     if (initialProfile && !name) throw new Error('Enter your name or choose Not now.');
-    saveProfile(name,values.displayName.trim().slice(0,60),'Profile saved.');
+    saveProfile(name,values.displayName.trim().slice(0,60),'Profile saved.',profileChoice === 'new');
   },
   customer: values => {
     const previous = owner(selected);
@@ -736,9 +789,18 @@ document.addEventListener('input', e => {
   if (page === 'call' && call && ['note','reflection','issue','amount'].includes(el.name)) call[el.name]=el.value;
   if (page === 'pending-result' && el.name === 'amount' && pendingDraft) pendingDraft.amount=el.value;
 });
-document.addEventListener('change', e => {
+document.addEventListener('change', async e => {
   const el = e.target;
   try {
+    if (el.id === 'profile-photo-file') {
+      const file = el.files?.[0];
+      if (file) {
+        const photo = await prepareProfilePhoto(file);
+        write(next => { next.settings.photo = photo; },'Profile photo saved.');
+        render();
+      }
+      return;
+    }
     if (el.dataset.filter !== undefined && el.name !== 'q') onFilter(el, () => { if (el.value) filters[el.name]=el.value; limit=40; });
     if (el.dataset.stage !== undefined) {
       write(next => {
@@ -806,4 +868,4 @@ fetch('downloads/android-builds.json',{cache:'no-store'}).then(r=>r.ok?r.json():
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 const initial = location.hash.slice(1);
 go(['journey','agenda','customers','performance','settings','pending','reminders'].includes(initial) ? initial : 'journey','',true);
-if (!initializationError && !data.settings.profileConfigured) openProfile(true);
+if (!initializationError && data.settings.profileReview < profileReview) openProfile(true);

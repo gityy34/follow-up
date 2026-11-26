@@ -193,11 +193,11 @@ dialog::backdrop { background: #251b3c91; }
 :root[data-theme="dark"] .card, :root[data-theme="dark"] .neon-metric {
   background: linear-gradient(147deg,#252849,var(--surface) 65%);
 }
-.topbar { min-height: 76px; }
+.topbar { min-height: 62px; }
 .top-left, .title-group { min-width: 0; }
 .top-left { flex: 1; }
-.title-group h1, .title-group .greeting, #sidebar-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.title-group .greeting, .title-group time { font-size: .81rem; color: var(--muted); }
+.title-group h1, #sidebar-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-group time { font-size: .81rem; color: var(--muted); }
 .title-group time { display: block; }
 .profile-avatar {
   display: grid; place-items: center; border-radius: 50%; width: 46px; height: 46px; flex-shrink: 0;
@@ -225,18 +225,18 @@ dialog::backdrop { background: #251b3c91; }
 .menu-items button:hover:not(:disabled) { background: var(--soft); }
 .neon-dashboard { display: grid; grid-template-columns: minmax(0,1.18fr) minmax(16.5rem,1fr); gap: 1rem; align-items: start; }
 .hero {
-  position: relative; isolation: isolate; aspect-ratio: .94; overflow: hidden; color: #fff; border-radius: 1.25rem;
-  background: linear-gradient(180deg,#10092a35 1%,transparent 42%), #171a47 url("neon-road.webp") center bottom / 100% auto no-repeat;
+  position: relative; isolation: isolate; overflow: hidden; color: #fff; border-radius: 1.25rem;
+  background: linear-gradient(106deg,#351860,#151943);
   border: 1px solid #7765a85e; box-shadow: 0 14px 42px #08091b63;
 }
-.hero-copy { position: absolute; top: 4%; inset-inline: 5%; }
-.hero-copy h2 { font-size: clamp(1.52rem,3.3vw,2.5rem); letter-spacing: -.025em; }
-.hero-copy p { color: #e0d7fb; font-size: clamp(.82rem,1.6vw,1rem); margin-top: .21rem; }
+.hero-copy { padding: .72rem .9rem .45rem; }
+.hero-copy h2 { font-size: clamp(1.18rem,3vw,1.72rem); letter-spacing: -.023em; overflow-wrap: anywhere; }
+.hero-copy p { color: #e0d7fb; font-size: .79rem; margin-top: .3rem; }
 .checkpoint { position: absolute; width: 39%; color: #f7f2ff; --pin: #e6a9ff; --glass: #392954d9; }
-.checkpoint-new { inset: 19.7% auto auto 9%; width: 37%; }
-.checkpoint-contacted { inset: 32.6% 5% auto auto; --pin: #adcfff; --glass: #293953dd; }
-.checkpoint-follow { inset: 51.5% auto auto 9%; width: 40%; }
-.checkpoint-resolved { inset: 66.1% 5% auto auto; width: 40%; --pin: #8cf4ef; --glass: #1c3a53dd; }
+.checkpoint-new { inset: 2.3% auto auto 9%; width: 37%; }
+.checkpoint-contacted { inset: 20.3% 3% auto auto; width: 42%; --pin: #adcfff; --glass: #293953dd; }
+.checkpoint-follow { inset: 40.6% auto auto 7%; width: 40%; }
+.checkpoint-resolved { inset: 60.6% 3% auto auto; width: 42%; --pin: #8cf4ef; --glass: #1c3a53dd; }
 .checkpoint-label {
   display: flex; align-items: center; gap: .45rem; min-height: clamp(47px,7vw,70px); padding: .31rem .52rem;
   line-height: 1.12; border-radius: .78rem; border: 1px solid color-mix(in srgb,var(--pin) 59%,transparent);
@@ -256,20 +256,12 @@ dialog::backdrop { background: #251b3c91; }
   height: 8px; background: var(--pin); clip-path: polygon(0 0,100% 0,50% 100%);
 }
 .road-more {
-  position: absolute; left: 39%; top: 65.5%; justify-content: center; padding: 0;
+  position: absolute; left: 37%; top: 58.5%; justify-content: center; padding: 0;
   border: 1px solid #bba8f54d; background: #201946db; color: #f2eaff; border-radius: 50%;
 }
 .road-more:hover { color: white; background: #4c3979; }
-.mission-heading { display: flex; justify-content: space-between; align-items: center; gap: .4rem; }
-.mission-heading .line > .neon-icon { color: var(--primary); }
-.neon-mission progress { display: block; height: .55rem; margin-block: .65rem; }
-.neon-mission progress::-webkit-progress-value { background: linear-gradient(90deg,#df84ed,#8e64ff); }
-.neon-mission progress::-moz-progress-bar { background: linear-gradient(90deg,#df84ed,#8e64ff); }
-.neon-payment { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .45rem .75rem; }
-.neon-payment h2 { font-size: .98rem; }
 .payment-values { display: flex; flex-wrap: wrap; gap: .32rem .7rem; color: var(--primary-dark); min-width: 0; }
 .payment-values strong { overflow-wrap: anywhere; }
-.neon-payment > * + * { margin-top: 0; }
 .neon-metric { text-align: left; padding: .7rem .55rem; color: var(--text); box-shadow: var(--shadow); }
 .neon-metric:hover { border-color: var(--accent); }
 .neon-metric .neon-icon {
@@ -281,7 +273,7 @@ dialog::backdrop { background: #251b3c91; }
   .neon-dashboard { grid-template-columns: minmax(0,1fr); max-width: 35rem; margin-inline: auto; }
 }
 @media (max-width: 670px) {
-  .topbar { min-height: 75px; padding: .48rem .66rem .48rem .9rem; }
+  .topbar { min-height: 59px; padding: .3rem .66rem .3rem .9rem; }
   .topbar .title-group time { display: block; }
   main { padding-top: .66rem; }
   #bottom-nav { display: flex; }
@@ -296,3 +288,80 @@ dialog::backdrop { background: #251b3c91; }
 }
 .neon-activity summary { cursor: pointer; font-weight: 690; color: var(--muted); }
 .neon-activity[open] summary { color: var(--primary-dark); }
+
+@font-face {
+  font-family: Manrope;
+  src: url("manrope.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+}
+:root[data-font="default"] { font-family: Inter, Arial, sans-serif; }
+:root[data-font="device"] { font-family: system-ui, sans-serif; }
+:root[data-font="modern"] { font-family: Manrope, system-ui, sans-serif; }
+:root[data-font="editorial"] { font-family: Georgia, "Times New Roman", serif; }
+:root[data-font="mono"] { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.profile-avatar { width: 40px; height: 40px; overflow: hidden; }
+.profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-avatar-large { width: min(52vw,180px); height: min(52vw,180px); margin-inline: auto; }
+.title-group h1 { font-size: clamp(1.06rem,2.4vw,1.33rem); }
+.hero-map {
+  position: relative; aspect-ratio: 1.14; isolation: isolate;
+  background: linear-gradient(180deg,#15194331,transparent 38%), #171a47 url("neon-road.webp") center bottom / 100% auto no-repeat;
+}
+.hero-period { display: inline-block; border-radius: 99px; padding: .18rem .52rem; background: #161a43c2; }
+.checkpoint-label { min-height: clamp(40px,6vw,67px); }
+.checkpoint-label b { font-size: clamp(1rem,2.4vw,1.5rem); }
+.mission-strip {
+  display: grid; grid-template-columns: minmax(0, .9fr) minmax(0,1.1fr); align-items: center;
+  min-height: 3.6rem; border-block: 1px solid var(--line); padding: .35rem .2rem; gap: .48rem;
+}
+.mission-strip h2 { font-size: .74rem; color: var(--muted); font-weight: 600; margin-bottom: .18rem; }
+.mission-strip strong { font-size: .88rem; font-weight: 740; }
+.strip-deal { min-width: 0; padding-left: .2rem; }
+.strip-mission { display: flex; align-items: center; gap: .44rem; }
+.strip-mission .overflow-menu { margin-left: auto; }
+.strip-mission .icon-button { min-width: 39px; padding: .2rem; }
+.mission-ring {
+  display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%;
+  background: conic-gradient(#c985fc var(--progress),var(--line) 0);
+}
+.mission-ring::after { content: ""; width: 21px; height: 21px; border-radius: inherit; background: var(--bg); }
+.hero-animate .checkpoint { animation: marker-pop 260ms cubic-bezier(.2,.75,.3,1.2) var(--arrive) both; }
+.checkpoint-resolved { --arrive: 570ms; }
+.checkpoint-follow { --arrive: 930ms; }
+.checkpoint-contacted { --arrive: 1290ms; }
+.checkpoint-new { --arrive: 1650ms; }
+@keyframes marker-pop {
+  from { opacity: 0; transform: translateY(6px) scale(.83); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.road-token {
+  position: absolute; z-index: 2; width: 12px; height: 12px; border-radius: 4px; pointer-events: none;
+  background: #dcafff; box-shadow: 0 0 11px currentColor; color: #d799ff; transform: translate(-50%,-50%);
+  animation-timing-function: linear; animation-fill-mode: both;
+}
+.road-token-resolved { background: #8cf4ef; color: #6ae0e1; animation-name: travel-success; animation-duration: 570ms; }
+.road-token-follow { animation-name: travel-follow; animation-duration: 830ms; animation-delay: 100ms; }
+.road-token-contacted { background: #a7c6ff; color: #a7c6ff; animation-name: travel-contact; animation-duration: 1090ms; animation-delay: 200ms; }
+.road-token-new { animation-name: travel-new; animation-duration: 1350ms; animation-delay: 300ms; }
+@keyframes travel-success {
+  from { left: 96%; top: 95%; opacity: 1; } 90% { opacity: 1; } to { left: 76%; top: 83%; opacity: 0; }
+}
+@keyframes travel-follow {
+  from { left: 96%; top: 95%; opacity: 0; } 12% { opacity: 1; } 40% { left: 76%; top: 83%; }
+  75% { left: 37%; top: 73%; } 92% { opacity: 1; } to { left: 27%; top: 63%; opacity: 0; }
+}
+@keyframes travel-contact {
+  from { left: 96%; top: 95%; opacity: 0; } 12% { opacity: 1; } 28% { left: 76%; top: 83%; }
+  58% { left: 27%; top: 63%; } 73% { left: 49%; top: 54%; } 94% { opacity: 1; } to { left: 76%; top: 43%; opacity: 0; }
+}
+@keyframes travel-new {
+  from { left: 96%; top: 95%; opacity: 0; } 11% { opacity: 1; } 23% { left: 76%; top: 83%; }
+  48% { left: 27%; top: 63%; } 74% { left: 76%; top: 43%; } 88% { left: 55%; top: 35%; }
+  95% { opacity: 1; } to { left: 28%; top: 25%; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-animate .checkpoint { animation: none; }
+  .road-token { display: none; }
+}

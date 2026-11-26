@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.LIGHT -> false
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
-            JourneyTheme(dark, settings?.palette ?: "Violet") {
+            JourneyTheme(dark, settings?.palette ?: "Violet", settings?.font ?: AppFont.DEFAULT) {
                 val loading = workspace == null
                 val hide = settings?.appLock == true && locked
                 val privacy = loading || hide || settings?.privateRecents == true

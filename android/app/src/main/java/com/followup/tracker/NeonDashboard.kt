@@ -1,5 +1,9 @@
 package com.followup.tracker
 
+import android.animation.ValueAnimator
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -25,6 +29,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -62,29 +68,10 @@ internal fun TrendGlyph() {
 }
 
 @Composable
-internal fun ProfileDialog(settings: AppSettings, initial: Boolean, onDismiss: () -> Unit,
-                           save: (String, String) -> Unit) {
-    var name by rememberSaveable { mutableStateOf(settings.operatorName) }
-    var display by rememberSaveable { mutableStateOf(settings.displayName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial) "Make it yours" else "Edit profile") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Field("Your name", name, { name = it.take(60) })
-                Field("Dashboard display name (optional)", display, { display = it.take(60) })
-            }
-        },
-        confirmButton = { TextButton(onClick = { save(name.trim(), display.trim()) },
-            enabled = !initial || name.isNotBlank()) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(if (initial) "Not now" else "Cancel") } }
-    )
-}
-
-@Composable
 internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setPeriod: (ReportPeriod) -> Unit,
                          start: () -> Unit, pending: () -> Unit, settings: () -> Unit,
-                         showCalls: () -> Unit, showAgenda: () -> Unit, openCustomer: (String) -> Unit) {
+                         showCalls: () -> Unit, showAgenda: () -> Unit, openCustomer: (String) -> Unit,
+                         playIntro: Boolean, onIntroFinished: () -> Unit) {
     val snapshot = remember(data, period, time) { journeySnapshot(data, period, time, zone()) }
     val today = localDay(time)
     val calls = data.calls.count { localDay(it.endedAt) == today }
@@ -92,32 +79,35 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
     val activeCustomers = data.customers.filterNot { it.archived }.mapTo(hashSetOf()) { it.id }
     val followUps = data.followUps.count { it.customerId in activeCustomers && it.status == FollowStatus.OPEN && localDay(it.dueAt) == today }
 
-    NeonRoad(snapshot, greeting(time, zone()), period, setPeriod)
+    val hello = listOf(greeting(time, zone()), data.settings.operatorName).filter { it.isNotBlank() }.joinToString(", ")
+    NeonRoad(snapshot, hello, period, setPeriod, playIntro, onIntroFinished)
 
-    Panel {
-        Text("Deal amount", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (snapshot.deals.amounts.isEmpty()) Text("${data.settings.currency} 0")
-        else snapshot.deals.amounts.forEach { (currency, amount) ->
-            Text("$currency $amount", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-        }
-    }
-    Panel {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("Today’s Mission", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f))
-            DotMenu("Mission options") { close ->
-                DropdownMenuItem(text = { Text("Start call session") }, onClick = { close(); start() })
-                val count = data.calls.count { it.outcome == Outcome.PENDING }
-                DropdownMenuItem(text = { Text("Pending calls ($count)") }, onClick = { close(); pending() })
-                DropdownMenuItem(text = { Text("Change call goal") }, onClick = { close(); settings() })
+    val progress = (calls.toFloat() / data.settings.goal).coerceAtMost(1f)
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("Deal amount", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val amounts = snapshot.deals.amounts.ifEmpty { mapOf(data.settings.currency to "0") }
+            amounts.forEach { (currency, amount) ->
+                Text("$currency $amount", style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             }
         }
-        Text("Complete ${data.settings.goal} calls today.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LinearProgressIndicator(progress = { (calls.toFloat() / data.settings.goal).coerceAtMost(1f) },
-            modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape))
-        Text("$calls of ${data.settings.goal} calls completed", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(30.dp), strokeWidth = 3.dp,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant)
+        Column(Modifier.weight(1.15f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("Today’s mission", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("$calls / ${data.settings.goal} calls", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        }
+        DotMenu("Mission options") { close ->
+            DropdownMenuItem(text = { Text("Start call session") }, onClick = { close(); start() })
+            val count = data.calls.count { it.outcome == Outcome.PENDING }
+            DropdownMenuItem(text = { Text("Pending calls ($count)") }, onClick = { close(); pending() })
+            DropdownMenuItem(text = { Text("Change call goal") }, onClick = { close(); settings() })
+        }
     }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MissionTile("Calls", calls, Icons.Outlined.Phone, Modifier.weight(1f), showCalls)
         MissionTile("Follow-ups", followUps, Icons.Outlined.DateRange, Modifier.weight(1f), showAgenda)
@@ -164,32 +154,83 @@ private fun MissionTile(label: String, value: Int, icon: ImageVector, modifier: 
     }
 }
 
-@Composable
-private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeriod, choose: (ReportPeriod) -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
-    BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(.94f).clip(shape)
-        .background(Color(0xff151843)).border(1.dp, Color(0xff7563ac).copy(alpha = .58f), shape)) {
-        val width = maxWidth
-        val height = maxHeight
-        Image(painterResource(R.drawable.neon_road), null, Modifier.matchParentSize(), alignment = Alignment.BottomCenter,
-            contentScale = ContentScale.Crop)
-        Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color(0x66090425), Color.Transparent), endY = 285f)))
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 17.dp)) {
-            Text("$greeting!", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(if (period == ReportPeriod.TODAY) "Here’s your customer journey today." else "Customer journey · ${period.title}",
-                color = Color(0xffdfd5ff), style = MaterialTheme.typography.bodyMedium)
+private data class RoadStop(val x: Float, val y: Float, val cardX: Float, val cardY: Float, val width: Float)
+private val roadStops = listOf(
+    RoadStop(.28f, .25f, .09f, .023f, .37f),
+    RoadStop(.76f, .43f, .55f, .203f, .42f),
+    RoadStop(.27f, .63f, .07f, .406f, .40f),
+    RoadStop(.76f, .83f, .55f, .606f, .42f)
+)
+
+private fun routeTo(stop: Int): PathMeasure {
+    val path = Path().apply {
+        moveTo(.96f, .95f)
+        for (index in 3 downTo stop) {
+            val target = roadStops[index]
+            val x = when (index) { 3 -> .88f; 2 -> .12f; 1 -> .91f; else -> .15f }
+            cubicTo(x, target.y + .13f, x, target.y, target.x, target.y)
         }
-        JourneyPin("New", data.new, Icons.Outlined.Person, violet, Modifier.offset(width * .09f, height * .197f).width(width * .37f))
-        JourneyPin("Contacted", data.contacted, Icons.Outlined.Phone, blue, Modifier.offset(width * .56f, height * .326f).width(width * .39f))
-        JourneyPin("Follow-up", data.followUps, Icons.Outlined.DateRange, violet, Modifier.offset(width * .09f, height * .515f).width(width * .40f))
-        JourneyPin("Resolved", data.deals.successful, Icons.Outlined.CheckCircle, cyan,
-            Modifier.offset(width * .55f, height * .661f).width(width * .40f))
-        DotMenu("Select journey period", Modifier.offset(width * .39f, height * .655f)
-            .clip(CircleShape).background(Color(0xff201946).copy(alpha = .86f)), Color(0xfff0e6ff)) { close ->
-            ReportPeriod.entries.forEach { option ->
-                DropdownMenuItem(text = { Text(if (option == period) "✓  ${option.title}" else option.title) },
-                    onClick = { close(); choose(option) })
+    }
+    return PathMeasure().apply { setPath(path, false) }
+}
+
+@Composable
+private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeriod, choose: (ReportPeriod) -> Unit,
+                     playIntro: Boolean, onIntroFinished: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    val motionEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
+    val animation = remember(playIntro) { Animatable(if (playIntro && motionEnabled) 0f else 1f) }
+    val routes = remember { roadStops.indices.map(::routeTo) }
+    LaunchedEffect(playIntro) {
+        if (playIntro) {
+            if (motionEnabled) {
+                animation.animateTo(1f, tween(2000, easing = LinearEasing))
+            }
+            onIntroFinished()
+        } else animation.snapTo(1f)
+    }
+    Column(Modifier.fillMaxWidth().clip(shape)
+        .background(Brush.horizontalGradient(listOf(Color(0xff361661), Color(0xff141942))))
+        .border(1.dp, Color(0xff7563ac).copy(alpha = .58f), shape)) {
+        Column(Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, top = 11.dp, bottom = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("$greeting!", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(period.title, color = Color(0xffdfd5ff), style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0xff171b43).copy(alpha = .72f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp))
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1.14f)) {
+            val width = maxWidth
+            val height = maxHeight
+            Image(painterResource(R.drawable.neon_road), null, Modifier.matchParentSize(), alignment = Alignment.BottomCenter,
+                contentScale = ContentScale.Crop)
+            val names = listOf("New", "Contacted", "Follow-up", "Successful")
+            val counts = listOf(data.new, data.contacted, data.followUps, data.deals.successful)
+            val icons = listOf(Icons.Outlined.Person, Icons.Outlined.Phone, Icons.Outlined.DateRange, Icons.Outlined.CheckCircle)
+            val colors = listOf(violet, blue, violet, cyan)
+            val intro = animation.value
+            roadStops.forEachIndexed { index, stop ->
+                val start = (3 - index) * .072f
+                val end = .82f - index * .12f
+                val travel = ((intro - start) / (end - start)).coerceIn(0f, 1f)
+                val show = ((intro - end) / .14f).coerceIn(0f, 1f)
+                if (intro >= start && travel < 1f) {
+                    val route = routes[index]
+                    val point = route.getPosition(route.length * travel)
+                    Box(Modifier.offset(width * point.x - 6.dp, height * point.y - 6.dp)
+                        .size(12.dp).clip(RoundedCornerShape(4.dp)).background(colors[index]))
+                }
+                if (show > 0f) JourneyPin(names[index], counts[index], icons[index], colors[index],
+                    Modifier.offset(width * stop.cardX, height * stop.cardY).width(width * stop.width)
+                        .graphicsLayer { alpha = show; scaleX = .82f + .18f * show; scaleY = .82f + .18f * show })
+            }
+            DotMenu("Select journey period", Modifier.offset(width * .37f, height * .585f)
+                .clip(CircleShape).background(Color(0xff201946).copy(alpha = .86f)), Color(0xfff0e6ff)) { close ->
+                ReportPeriod.entries.forEach { option ->
+                    DropdownMenuItem(text = { Text(if (option == period) "✓  ${option.title}" else option.title) },
+                        onClick = { close(); choose(option) })
+                }
             }
         }
     }
@@ -206,7 +247,7 @@ private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color
             Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
             Column {
                 Text(label, color = Color(0xfff2eeff), style = MaterialTheme.typography.labelMedium)
-                Text(count.toString(), color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(count.toString(), color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
         }
         Canvas(Modifier.size(20.dp, 9.dp)) {

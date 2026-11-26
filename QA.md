@@ -28,3 +28,9 @@ Android builds use compile and target SDK 36, minimum Android API 26, JDK 21 and
 - Ten Android JVM tests passed. The new tests cover local-time greetings, winter and summer boundaries, two- and twenty-day road metrics, and reminder date filtering on a Sunday.
 - The browser data suite and DOM smoke flow passed for first-run name setup, the saved display name, hidden call controls, report periods, reminder day filters and opening follow-up details. The Pending and multi-currency deal flows also passed.
 - Debug and signed release builds, signed bundle packaging, Android test APK compilation, and debug lint passed. The environment blocked the local visual preview port. Native layouts and notifications remain unverified on a physical Android device.
+
+## Version 1.4.0 profile and dashboard polish
+
+- The Android debug and release JVM suites cover profile review, old settings, font preferences and encrypted photo metadata. The test APK compiles and lint passes.
+- Browser data and DOM checks exercise both fresh setup and retaining an existing profile, personal name only in the road greeting, photo controls and persistence, font selection, period labels, marker markup, reminders and the Pending deal flow.
+- The browser DOM checks simulate the photo decoder. On-device photo picking, animation playback and visual layout still need device QA.

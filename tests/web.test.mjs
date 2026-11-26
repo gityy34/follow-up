@@ -126,3 +126,18 @@ test('a pending reminder moves to the day of its actual reschedule', async () =>
   w.followUps[0].reminderPolicy='OFF';
   assert.equal(remindersFor(w,'today',now).length,0);
 });
+
+test('profile review keeps legacy names and backups preserve font and photo', async () => {
+  const { profileReview, validPhoto } = await import('../dist/data.js');
+  const disk = storage();
+  save(disk,{...workspace(),settings:{operatorName:'Uzair',displayName:'Callx',profileConfigured:true}});
+  const w = load(disk);
+  assert.equal(w.settings.operatorName,'Uzair');
+  assert.equal(w.settings.displayName,'Callx');
+  assert.equal(w.settings.profileReview,0);
+  assert.equal(w.settings.font,'DEFAULT');
+  Object.assign(w.settings,{profileReview,photo:'/9j/AA==',font:'MODERN'});
+  assert.deepEqual((await decrypt(await encrypt(w,'profile review backup'),'profile review backup')).settings,w.settings);
+  assert.equal(validPhoto('/9j/<svg>'),false);
+  assert.equal(validPhoto('/9j/'+'A'.repeat(90000)),false);
+});

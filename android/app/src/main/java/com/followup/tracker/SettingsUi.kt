@@ -32,6 +32,7 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
     var importUri by remember { mutableStateOf<Uri?>(null) }
     var preview by remember { mutableStateOf<Workspace?>(null) }
     var editProfile by remember { mutableStateOf(false) }
+    var showPhoto by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf("") }
     var appearance by remember { mutableStateOf(false) }
     var confirmAction by remember { mutableStateOf("") }
@@ -108,11 +109,27 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
         if (uri != null) { importUri = uri; password = ""; backupDialog = "Import Backup" }
     }
 
+    val selectPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val image = withContext(Dispatchers.IO) { readProfilePhoto(context, uri) }
+                repo.settings.set(repo.settings.current().copy(photo = image))
+                snack.showSnackbar("Profile photo saved.")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { snack.showSnackbar("That image could not be opened. Choose another photo.") }
+        }
+    }
+    if (showPhoto) AlertDialog(onDismissRequest = { showPhoto = false }, title = { Text("Profile photo") },
+        text = { Box(Modifier.fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            ProfileAvatar(config, Modifier.size(164.dp))
+        } }, confirmButton = { TextButton({ showPhoto = false }) { Text("Close") } })
+
     if (appearance) {
         Panel {
             Section("Appearance")
             Choice("Theme", ThemeMode.entries, config.theme, { it.name.lowercase().replaceFirstChar(Char::uppercase) }) { change(config.copy(theme = it)) }
             Choice("Palette", listOf("Violet", "Ocean", "Forest"), config.palette, { it }) { change(config.copy(palette = it)) }
+            Choice("Font", AppFont.entries, config.font, { it.title }) { change(config.copy(font = it)) }
             Text("Custom layout presets · Coming Soon")
         }
         Primary("Back to Settings") { appearance = false }
@@ -120,16 +137,21 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
     }
 
     if (editProfile) {
-        ProfileDialog(config, false, { editProfile = false }) { name, display ->
-            change(config.copy(operatorName = name, displayName = display, profileConfigured = true))
+        ProfileDialog(config, false, { editProfile = false }) { name, display, _ ->
+            change(config.copy(operatorName = name, displayName = display, profileConfigured = true, profileReview = PROFILE_REVIEW))
             editProfile = false
         }
     }
     Panel {
         Section("Profile")
+        ProfileAvatar(config)
         Text(config.operatorName.ifBlank { "Your name has not been set." })
         Text(config.displayName.ifBlank { "Customer Journey" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton({ editProfile = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Edit name and display") }
+        OutlinedButton({ selectPhoto.launch("image/*") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text(if (config.photo.isBlank()) "Upload profile photo" else "Change profile photo")
+        }
+        if (config.photo.isNotBlank()) TextButton({ showPhoto = true }) { Text("View profile photo") }
     }
     Panel {
         Section("Appearance")

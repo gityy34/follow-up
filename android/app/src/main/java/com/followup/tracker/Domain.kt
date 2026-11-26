@@ -29,6 +29,15 @@ enum class Reminder(val title: String) {
     SHORT("15 minutes before"), CUSTOM("Custom date and time"), OFF("Off")
 }
 enum class ThemeMode { NEON, SYSTEM, LIGHT, DARK }
+enum class AppFont(val title: String) {
+    DEFAULT("App default"), DEVICE("Device font"), MODERN("Manrope"), EDITORIAL("Serif"), MONO("Monospace")
+}
+internal const val PROFILE_REVIEW = 1
+
+internal fun isProfilePhoto(value: String): Boolean =
+    value.length in 4..90_000 && value.length % 4 == 0 && value.startsWith("/9j/") &&
+        value.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "+/=" }
+
 
 @Entity(tableName = "customers")
 data class Customer(
@@ -130,7 +139,10 @@ data class AppSettings(
     val currency: String = "PKR",
     val operatorName: String = "",
     val displayName: String = "",
-    val profileConfigured: Boolean = false
+    val profileConfigured: Boolean = false,
+    val profileReview: Int = 0,
+    val photo: String = "",
+    val font: AppFont = AppFont.DEFAULT
 )
 
 data class Workspace(

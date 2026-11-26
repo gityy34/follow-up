@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DateRange
@@ -23,6 +22,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -40,7 +43,8 @@ internal fun localDay(time: Long) = Instant.ofEpochMilli(time).atZone(zone()).to
 internal fun initials(value: String) = value.trim().split(Regex("\\s+")).take(2).joinToString("") { it.firstOrNull()?.uppercase().orEmpty() }
 
 @Composable
-internal fun JourneyTheme(dark: Boolean, palette: String, content: @Composable () -> Unit) {
+@OptIn(ExperimentalTextApi::class)
+internal fun JourneyTheme(dark: Boolean, palette: String, font: AppFont, content: @Composable () -> Unit) {
     val lightPrimary = when (palette) { "Ocean" -> Color(0xff285ab1); "Forest" -> Color(0xff1c6956); else -> Color(0xff662fcd) }
     val darkPrimary = when (palette) { "Ocean" -> Color(0xffafc8ff); "Forest" -> Color(0xff8ed4b9); else -> Color(0xffd4b7ff) }
     val colors = if (dark) darkColorScheme(
@@ -52,7 +56,29 @@ internal fun JourneyTheme(dark: Boolean, palette: String, content: @Composable (
     else lightColorScheme(primary = lightPrimary, background = Color(0xfff7f4ff), surface = Color.White,
         surfaceVariant = Color(0xffeee7fa), onSurface = Color(0xff241634), onSurfaceVariant = Color(0xff514562),
         primaryContainer = Color(0xffeee1ff), onPrimaryContainer = Color(0xff31135e), error = Color(0xffa41c4b))
-    MaterialTheme(colorScheme = colors, content = content)
+    val typography = remember(font) {
+        val base = Typography()
+        val family = when (font) {
+            AppFont.DEFAULT -> FontFamily.SansSerif
+            AppFont.DEVICE -> FontFamily.Default
+            AppFont.MODERN -> FontFamily(listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold).map { weight ->
+                Font(R.font.manrope, weight = weight, variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
+            })
+            AppFont.EDITORIAL -> FontFamily.Serif
+            AppFont.MONO -> FontFamily.Monospace
+        }
+        Typography(
+            displayLarge = base.displayLarge.copy(fontFamily = family), displayMedium = base.displayMedium.copy(fontFamily = family),
+            displaySmall = base.displaySmall.copy(fontFamily = family), headlineLarge = base.headlineLarge.copy(fontFamily = family),
+            headlineMedium = base.headlineMedium.copy(fontFamily = family), headlineSmall = base.headlineSmall.copy(fontFamily = family),
+            titleLarge = base.titleLarge.copy(fontFamily = family), titleMedium = base.titleMedium.copy(fontFamily = family),
+            titleSmall = base.titleSmall.copy(fontFamily = family), bodyLarge = base.bodyLarge.copy(fontFamily = family),
+            bodyMedium = base.bodyMedium.copy(fontFamily = family), bodySmall = base.bodySmall.copy(fontFamily = family),
+            labelLarge = base.labelLarge.copy(fontFamily = family), labelMedium = base.labelMedium.copy(fontFamily = family),
+            labelSmall = base.labelSmall.copy(fontFamily = family)
+        )
+    }
+    MaterialTheme(colorScheme = colors, typography = typography, content = content)
 }
 
 @Composable
@@ -63,6 +89,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
     var backTo by rememberSaveable { mutableStateOf("Journey") }
     var pendingId by rememberSaveable { mutableStateOf("") }
     var period by rememberSaveable { mutableStateOf(ReportPeriod.TODAY) }
+    var roadIntroPlayed by rememberSaveable { mutableStateOf(false) }
     var reminderDay by rememberSaveable { mutableStateOf(ReminderDay.TODAY) }
     var currentTime by remember { mutableLongStateOf(now()) }
     LaunchedEffect(Unit) {
@@ -161,39 +188,35 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
             dismissIncoming()
         }
     }
-    fun saveProfile(name: String, display: String) {
+    fun saveProfile(name: String, display: String, newProfile: Boolean) {
         scope.launch {
             try {
-                repo.settings.set(repo.settings.current().copy(
-                    operatorName = name, displayName = display, profileConfigured = true))
+                val settings = repo.settings.current()
+                repo.settings.set(settings.copy(operatorName = name, displayName = display, profileConfigured = true,
+                    profileReview = PROFILE_REVIEW, photo = if (newProfile) "" else settings.photo))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { snackbar.showSnackbar("The profile could not be saved.") }
         }
     }
-    if (route == "Journey" && !workspace.settings.profileConfigured) {
-        ProfileDialog(workspace.settings, true, { saveProfile("", "") }, ::saveProfile)
+    val needsProfileReview = workspace.settings.profileReview < PROFILE_REVIEW
+    if (route == "Journey" && needsProfileReview) {
+        ProfileDialog(workspace.settings, true, {
+            saveProfile(workspace.settings.operatorName, workspace.settings.displayName, false)
+        }, ::saveProfile)
     }
     BackHandler(route != "Journey", onBack = ::back)
     Scaffold(
         topBar = {
             Surface(color = MaterialTheme.colorScheme.background) {
-                Row(Modifier.statusBarsPadding().fillMaxWidth().heightIn(min = 74.dp).padding(horizontal = 14.dp, vertical = 6.dp),
+                Row(Modifier.statusBarsPadding().fillMaxWidth().heightIn(min = 59.dp).padding(horizontal = 14.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     if (route == "Journey") {
-                        val initials = initials(workspace.settings.operatorName.ifBlank { workspace.settings.displayName }).ifBlank { "UY" }
-                        Surface(Modifier.size(44.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
-                            Box(contentAlignment = Alignment.Center) { Text(initials, fontWeight = FontWeight.Bold) }
-                        }
+                        ProfileAvatar(workspace.settings)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            val greeting = greeting(activeTime, zone())
-                            Text(listOf(greeting, workspace.settings.operatorName).filter { it.isNotBlank() }.joinToString(", "),
-                                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(workspace.settings.displayName.ifBlank { "Customer Journey" }, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("Today · " + localDay(activeTime).format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.ENGLISH)),
+                            Text(localDay(activeTime).format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.ENGLISH)),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = { reminderDay = ReminderDay.TODAY; route = "Reminders" }) {
@@ -246,7 +269,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                 when (route) {
                     "Journey" -> NeonJourney(data, activeTime, period, { period = it }, ::startSession,
                         { route = "Pending" }, { route = "Settings" }, { period = ReportPeriod.TODAY; route = "Performance" },
-                        { route = "Agenda" }, ::viewCustomer)
+                        { route = "Agenda" }, ::viewCustomer, !roadIntroPlayed && !needsProfileReview) { roadIntroPlayed = true }
                     "Reminders" -> {
                         val rows = remember(data, reminderDay, timezone, localDay(activeTime)) { remindersFor(data, reminderDay, activeTime, timezone) }
                         ReminderList(data, rows, reminderDay) { row ->
