@@ -245,7 +245,8 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
             key(route) {
                 when (route) {
                     "Journey" -> NeonJourney(data, activeTime, period, { period = it }, ::startSession,
-                        { route = "Pending" }, { route = "Settings" }, { period = ReportPeriod.TODAY; route = "Performance" }, { route = "Agenda" })
+                        { route = "Pending" }, { route = "Settings" }, { period = ReportPeriod.TODAY; route = "Performance" },
+                        { route = "Agenda" }, ::viewCustomer)
                     "Reminders" -> {
                         val rows = remember(data, reminderDay, timezone, localDay(activeTime)) { remindersFor(data, reminderDay, activeTime, timezone) }
                         ReminderList(data, rows, reminderDay) { row ->

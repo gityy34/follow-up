@@ -84,7 +84,7 @@ internal fun ProfileDialog(settings: AppSettings, initial: Boolean, onDismiss: (
 @Composable
 internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setPeriod: (ReportPeriod) -> Unit,
                          start: () -> Unit, pending: () -> Unit, settings: () -> Unit,
-                         showCalls: () -> Unit, showAgenda: () -> Unit) {
+                         showCalls: () -> Unit, showAgenda: () -> Unit, openCustomer: (String) -> Unit) {
     val snapshot = remember(data, period, time) { journeySnapshot(data, period, time, zone()) }
     val today = localDay(time)
     val calls = data.calls.count { localDay(it.endedAt) == today }
@@ -122,6 +122,28 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
         MissionTile("Calls", calls, Icons.Outlined.Phone, Modifier.weight(1f), showCalls)
         MissionTile("Follow-ups", followUps, Icons.Outlined.DateRange, Modifier.weight(1f), showAgenda)
         MissionTile("Needs review", issues, Icons.Outlined.Info, Modifier.weight(1f), showCalls)
+    }
+    var showActivity by rememberSaveable { mutableStateOf(false) }
+    Panel {
+        TextButton(onClick = { showActivity = !showActivity }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (showActivity) "Hide activity and next action" else "Activity and next action")
+        }
+        if (showActivity) {
+            val customers = data.customers.associateBy { it.id }
+            val next = data.followUps.filter { it.customerId in activeCustomers && it.status == FollowStatus.OPEN }
+                .minByOrNull { it.dueAt }
+            Section("Next Best Action")
+            Text(next?.let { "${customers[it.customerId]?.displayName.orEmpty()} · ${it.purpose}" }
+                ?: "Add a customer and schedule the next call.")
+            TextButton(onClick = showAgenda) { Text("Open Agenda") }
+            Section("Recent Activity")
+            if (data.timeline.isEmpty()) Text("Saved activity will appear here.")
+            data.timeline.take(4).forEach { event ->
+                TextButton(onClick = { openCustomer(event.customerId) }) {
+                    Text("${event.eventType} · ${customers[event.customerId]?.displayName.orEmpty()}")
+                }
+            }
+        }
     }
 
 }

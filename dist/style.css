@@ -294,3 +294,5 @@ dialog::backdrop { background: #251b3c91; }
   .top-left { gap: .5rem; }
   .top-right .icon-button { min-width: 43px; }
 }
+.neon-activity summary { cursor: pointer; font-weight: 690; color: var(--muted); }
+.neon-activity[open] summary { color: var(--primary-dark); }

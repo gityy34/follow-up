@@ -167,6 +167,7 @@ function journey(w, time) {
   const checkpoint = (text,count,glyph,place) => `<div class="checkpoint checkpoint-${place}">
     <div class="checkpoint-label">${icon(glyph)}<div><span>${text}</span><b>${count}</b></div></div><i class="checkpoint-dot" aria-hidden="true"></i></div>`;
   const amounts = Object.entries(snapshot.deals.amounts);
+  const next = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN').sort(orderFollow)[0];
   const tiles = [['Calls',calls.length,'call','today-calls'],['Follow-ups',due,'calendar_month','today-agenda'],['Needs review',review,'flag','today-calls']];
   return `<div class="neon-dashboard"><section class="hero" aria-label="Customer journey, ${periods[period]}">
     <div class="hero-copy"><h2>${greeting(time)}!</h2><p>${period === 'today' ? 'Here’s your customer journey today.' : 'Customer journey · ' + periods[period]}</p></div>
@@ -181,6 +182,13 @@ function journey(w, time) {
         <p class="note">Complete ${w.settings.goal} calls today.</p><progress aria-label="Daily call goal" value="${Math.min(calls.length,w.settings.goal)}" max="${w.settings.goal}"></progress>
         <p class="note">${calls.length} of ${w.settings.goal} calls completed</p></section>
       <div class="stats">${tiles.map(([label,count,glyph,action]) => `<button type="button" class="metric neon-metric" data-action="${action}">${icon(glyph)}<b>${count}</b><span>${label}</span></button>`).join('')}</div>
+      <details class="card neon-activity"><summary>Activity and next action</summary>
+        <h2>Next Best Action</h2><p>${next ? escape((owner(next.customerId)?.displayName ?? '') + ' · ' + next.purpose) :
+          'Add a customer and schedule the next call.'}</p>
+        ${next ? button('Open Follow-up','open-follow',next.id) : button('Add Follow-up','add-follow')}
+        <h2>Recent Activity</h2>${list(w.timeline.slice(0,5).map(e =>
+          row(e.eventType,(owner(e.customerId)?.displayName ?? '') + ' · ' + dateText(e.eventTime),'open-customer',e.customerId)),
+          'Saved activity will appear here.')}</details>
     </div></div>`;
 }
 
@@ -785,7 +793,7 @@ window.addEventListener('resize', () => { drawTrend(visible(data,demo)); });
 themeMedia.addEventListener('change',render);
 setInterval(updateTimer,1000);
 const refreshDashboard = () => {
-  if (page === 'journey' && !modal.open && !query('.overflow-menu[open]')) render();
+  if (page === 'journey' && !modal.open && !query('.overflow-menu[open], .neon-activity[open]')) render();
 };
 setInterval(refreshDashboard,60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDashboard(); });
