@@ -27,16 +27,18 @@ internal fun settingsJson(s: AppSettings) = obj(
     "themeMode" to s.theme.name, "selectedPalette" to s.palette, "notificationEnabled" to s.notifications,
     "defaultReminderOffset" to s.defaultReminder.name, "appLockEnabled" to s.appLock, "lockAfter" to s.lockAfter,
     "privateRecents" to s.privateRecents, "goal" to s.goal, "retentionDays" to s.retentionDays,
-    "lastExport" to s.lastExport, "exportLabel" to s.exportLabel, "onboardingDone" to s.onboardingDone, "currency" to s.currency
+    "lastExport" to s.lastExport, "exportLabel" to s.exportLabel, "onboardingDone" to s.onboardingDone, "currency" to s.currency,
+    "operatorName" to s.operatorName, "displayName" to s.displayName, "profileConfigured" to s.profileConfigured
 )
 
 internal fun settingsFromJson(s: JSONObject) = AppSettings(
-    s.enum("themeMode", ThemeMode.SYSTEM), s.optString("selectedPalette", "Violet").takeIf { it in listOf("Violet", "Ocean", "Forest") } ?: "Violet",
+    s.enum("themeMode", ThemeMode.NEON).let { if (it == ThemeMode.SYSTEM && !s.has("profileConfigured")) ThemeMode.NEON else it }, s.optString("selectedPalette", "Violet").takeIf { it in listOf("Violet", "Ocean", "Forest") } ?: "Violet",
     s.optBoolean("notificationEnabled"), s.enum("defaultReminderOffset", Reminder.DAY).takeUnless { it == Reminder.CUSTOM || it == Reminder.DEFAULT } ?: Reminder.DAY,
     s.optBoolean("appLockEnabled"), s.optInt("lockAfter", 1).coerceIn(0, 60), s.optBoolean("privateRecents"),
     s.optInt("goal", 5).coerceIn(1, 500), s.optInt("retentionDays", 90).coerceIn(1, 3650),
     s.optLong("lastExport"), s.optString("exportLabel").take(80), s.optBoolean("onboardingDone"),
-    s.optString("currency").takeIf(::validCurrency) ?: "PKR"
+    s.optString("currency").takeIf(::validCurrency) ?: "PKR",
+    s.optString("operatorName").trim().take(60), s.optString("displayName").trim().take(60), s.optBoolean("profileConfigured")
 )
 
 internal data class BackupManifest(val formatVersion: Int, val createdAt: Long, val checksum: String,
@@ -65,7 +67,7 @@ internal object BackupCodec {
         val nonce = ByteArray(nonceSize).also(random::nextBytes)
         val data = encode(workspace).toString()
         val manifest = obj("formatVersion" to 2, "createdAt" to now(), "checksum" to digest(data.toByteArray()),
-            "encrypted" to true, "appVersion" to "1.2.0")
+            "encrypted" to true, "appVersion" to "1.3.0")
         val payload = obj("manifest" to manifest, "data" to data).toString().toByteArray()
         require(payload.size <= maxSize) { "This backup exceeds this version’s file size limit." }
         return try { magic + salt + nonce + cipher(Cipher.ENCRYPT_MODE, passphrase, salt, nonce).doFinal(payload) }

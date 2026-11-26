@@ -31,6 +31,7 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
     var confirmation by remember { mutableStateOf("") }
     var importUri by remember { mutableStateOf<Uri?>(null) }
     var preview by remember { mutableStateOf<Workspace?>(null) }
+    var editProfile by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf("") }
     var appearance by remember { mutableStateOf(false) }
     var confirmAction by remember { mutableStateOf("") }
@@ -118,6 +119,18 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
         return
     }
 
+    if (editProfile) {
+        ProfileDialog(config, false, { editProfile = false }) { name, display ->
+            change(config.copy(operatorName = name, displayName = display, profileConfigured = true))
+            editProfile = false
+        }
+    }
+    Panel {
+        Section("Profile")
+        Text(config.operatorName.ifBlank { "Your name has not been set." })
+        Text(config.displayName.ifBlank { "Customer Journey" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton({ editProfile = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Edit name and display") }
+    }
     Panel {
         Section("Appearance")
         OutlinedButton({ appearance = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open Appearance") }

@@ -87,3 +87,29 @@ test('pending calls resolve once and totals use exact decimals and the resolutio
   const password = 'restore deals and currency';
   assert.deepEqual(await decrypt(await encrypt(data,password),password),data);
 });
+
+test('neon dashboard dates, profile defaults, and weekend reminders', async () => {
+  const { greeting, journeySnapshot, remindersFor, reminderTime } = await import('../dist/data.js');
+  const local = (month,hour) => new Date(2026,month-1,29,hour).getTime();
+  assert.equal(greeting(local(11,1)),'Good night');
+  assert.equal(greeting(local(11,12)),'Good afternoon');
+  assert.equal(greeting(local(11,17)),'Good evening');
+  assert.equal(greeting(local(7,17)),'Good afternoon');
+  assert.equal(greeting(local(7,21)),'Good night');
+  const w = workspace();
+  const sunday = local(11,12);
+  const c = customer({displayName:'Amit'},addDays(sunday,-6));
+  w.customers.push(c);
+  w.followUps.push(...[0,1,2].map(n => followUp({customerId:c.id,purpose:'Follow-up '+n,dueAt:addDays(sunday,n),reminderPolicy:'DAY'})));
+  assert.equal(remindersFor(w,'today',sunday)[0].followUp.purpose,'Follow-up 1');
+  assert.equal(remindersFor(w,'yesterday',sunday)[0].followUp.purpose,'Follow-up 0');
+  assert.equal(remindersFor(w,'tomorrow',sunday)[0].followUp.purpose,'Follow-up 2');
+  assert.equal(reminderTime({reminderPolicy:'DAY',timezoneId:'America/New_York',dueAt:Date.parse('2026-03-08T15:00:00Z')}),
+    Date.parse('2026-03-07T16:00:00Z'));
+  assert.equal(journeySnapshot(w,'2d',sunday).newCustomers,0);
+  assert.equal(journeySnapshot(w,'20d',sunday).newCustomers,1);
+  const old = storage();
+  save(old,{...w,settings:{themeMode:'SYSTEM'}});
+  assert.equal(load(old).settings.themeMode,'NEON');
+  assert.equal(load(old).settings.profileConfigured,false);
+});

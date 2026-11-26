@@ -53,7 +53,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val workspace by model.state.collectAsState()
             val settings = workspace?.settings
-            val dark = settings?.theme == ThemeMode.DARK || (settings?.theme != ThemeMode.LIGHT && isSystemInDarkTheme())
+            val dark = when (settings?.theme ?: ThemeMode.NEON) {
+                ThemeMode.NEON, ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
             JourneyTheme(dark, settings?.palette ?: "Violet") {
                 val loading = workspace == null
                 val hide = settings?.appLock == true && locked

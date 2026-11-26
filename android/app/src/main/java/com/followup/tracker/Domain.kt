@@ -28,7 +28,7 @@ enum class Reminder(val title: String) {
     DEFAULT("Default"), DAY("One day before"), SAME_DAY("Same day at 9 AM"), HOUR("One hour before"),
     SHORT("15 minutes before"), CUSTOM("Custom date and time"), OFF("Off")
 }
-enum class ThemeMode { SYSTEM, LIGHT, DARK }
+enum class ThemeMode { NEON, SYSTEM, LIGHT, DARK }
 
 @Entity(tableName = "customers")
 data class Customer(
@@ -115,7 +115,7 @@ data class TimelineEvent(
 data class RestoreJournal(@PrimaryKey val id: Int = 1, val settingsJson: String)
 
 data class AppSettings(
-    val theme: ThemeMode = ThemeMode.SYSTEM,
+    val theme: ThemeMode = ThemeMode.NEON,
     val palette: String = "Violet",
     val notifications: Boolean = false,
     val defaultReminder: Reminder = Reminder.DAY,
@@ -127,7 +127,10 @@ data class AppSettings(
     val lastExport: Long = 0,
     val exportLabel: String = "",
     val onboardingDone: Boolean = false,
-    val currency: String = "PKR"
+    val currency: String = "PKR",
+    val operatorName: String = "",
+    val displayName: String = "",
+    val profileConfigured: Boolean = false
 )
 
 data class Workspace(
@@ -192,7 +195,58 @@ internal val entryOutcomes = listOf(Outcome.RESOLVED, Outcome.PENDING, Outcome.F
     Outcome.HANG_UP, Outcome.NO_ANSWER, Outcome.ISSUE, Outcome.CANCELLED, Outcome.OTHER)
 
 enum class ReportPeriod(val title: String, val days: Int) {
-    TODAY("Today", 1), LAST_24_HOURS("Last 24 Hours", 1), LAST_7_DAYS("Last 7 Days", 7), LAST_30_DAYS("Last 30 Days", 30)
+    TODAY("Today", 1), LAST_24_HOURS("Last 24 Hours", 1), LAST_2_DAYS("Last 2 Days", 2),
+    LAST_7_DAYS("Last 7 Days", 7), LAST_20_DAYS("Last 20 Days", 20), LAST_30_DAYS("Last 30 Days", 30)
+}
+
+fun greeting(time: Long, timezone: ZoneId): String {
+    val local = Instant.ofEpochMilli(time).atZone(timezone)
+    val summer = local.monthValue in 4..9
+    return when (local.hour) {
+        in 4..11 -> "Good morning"
+        in 12 until (if (summer) 18 else 17) -> "Good afternoon"
+        in (if (summer) 18 else 17) until (if (summer) 21 else 20) -> "Good evening"
+        else -> "Good night"
+    }
+}
+
+enum class ReminderDay(val title: String, val offset: Long) {
+    YESTERDAY("Yesterday", -1), TODAY("Today", 0), TOMORROW("Tomorrow", 1)
+}
+
+data class ScheduledReminder(val followUp: FollowUp, val at: Long)
+
+fun remindersFor(data: Workspace, day: ReminderDay, time: Long, timezone: ZoneId): List<ScheduledReminder> {
+    val target = Instant.ofEpochMilli(time).atZone(timezone).toLocalDate().plusDays(day.offset)
+    val from = target.atStartOfDay(timezone).toInstant().toEpochMilli()
+    val end = target.plusDays(1).atStartOfDay(timezone).toInstant().toEpochMilli()
+    val eligible = data.customers.filterNot { it.archived }.mapTo(hashSetOf()) { it.id }
+    return data.followUps.mapNotNull { row ->
+        if (row.customerId !in eligible || row.status == FollowStatus.DELETED) return@mapNotNull null
+        val at = if (row.status == FollowStatus.DONE) row.alertedAt else
+            row.alertedAt ?: row.snoozedUntil ?: reminderTime(row, data.settings.defaultReminder)
+        at?.takeIf { it in from until end }?.let { ScheduledReminder(row, it) }
+    }.sortedWith(compareBy<ScheduledReminder> { it.at }.thenBy { it.followUp.dueAt })
+}
+
+data class JourneySnapshot(val new: Int, val contacted: Int, val followUps: Int, val deals: DealTotals)
+
+fun reportStart(period: ReportPeriod, time: Long, timezone: ZoneId): Long =
+    if (period == ReportPeriod.LAST_24_HOURS) time - 86_400_000L
+    else Instant.ofEpochMilli(time).atZone(timezone).toLocalDate().minusDays(period.days.toLong() - 1)
+        .atStartOfDay(timezone).toInstant().toEpochMilli()
+
+fun journeySnapshot(data: Workspace, period: ReportPeriod, time: Long, timezone: ZoneId): JourneySnapshot {
+    val start = reportStart(period, time, timezone)
+    val last = if (period == ReportPeriod.LAST_24_HOURS) time + 1
+        else Instant.ofEpochMilli(time).atZone(timezone).toLocalDate().plusDays(1).atStartOfDay(timezone).toInstant().toEpochMilli()
+    val active = data.customers.filterNot { it.archived }.mapTo(hashSetOf()) { it.id }
+    return JourneySnapshot(
+        data.customers.count { it.createdAt in start..time },
+        data.calls.filter { it.endedAt in start..time }.distinctBy { it.customerId }.size,
+        data.followUps.count { it.customerId in active && it.status != FollowStatus.DELETED && it.dueAt in start until last },
+        dealTotals(data.calls, start, time + 1)
+    )
 }
 
 data class DealTotals(val successful: Int, val amounts: Map<String, String>)
@@ -224,8 +278,7 @@ fun report(workspace: Workspace, period: ReportPeriod, time: Long, timezone: Zon
     val days = period.days
     val endDate = Instant.ofEpochMilli(time).atZone(timezone).toLocalDate()
     val first = endDate.minusDays(days.toLong() - 1)
-    val start = if (period == ReportPeriod.LAST_24_HOURS) time - 86_400_000L
-        else first.atStartOfDay(timezone).toInstant().toEpochMilli()
+    val start = reportStart(period, time, timezone)
     val calendarEnd = endDate.plusDays(1).atStartOfDay(timezone).toInstant().toEpochMilli()
     val callEnd = minOf(calendarEnd, time + 1)
     val real = workspace.customers.filter { it.demo == demo }.mapTo(hashSetOf()) { it.id }

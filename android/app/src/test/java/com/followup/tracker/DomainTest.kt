@@ -80,4 +80,40 @@ class DomainTest {
         assertEquals("9999999999999999999999.123456790", rolling.deals.amounts["PKR"])
         assertEquals(rolling.calls, rolling.trend.sumOf { it.second })
     }
+    @Test fun greetingsSwitchAtLocalAndSeasonalBoundaries() {
+        val tz = ZoneId.of("Asia/Karachi")
+        fun greet(month: Int, hour: Int) =
+            greeting(ZonedDateTime.of(2026, month, 15, hour, 0, 0, 0, tz).toInstant().toEpochMilli(), tz)
+        assertEquals("Good night", greet(11, 1))
+        assertEquals("Good morning", greet(11, 11))
+        assertEquals("Good afternoon", greet(11, 12))
+        assertEquals("Good evening", greet(11, 17))
+        assertEquals("Good night", greet(11, 20))
+        assertEquals("Good afternoon", greet(7, 17))
+        assertEquals("Good evening", greet(7, 18))
+        assertEquals("Good night", greet(7, 21))
+    }
+
+    @Test fun roadFiltersAndRemindersUseTheSelectedCalendarDates() {
+        val tz = ZoneId.of("Asia/Karachi")
+        val sunday = ZonedDateTime.of(2026, 11, 29, 12, 0, 0, 0, tz)
+        val clock = sunday.toInstant().toEpochMilli()
+        val customer = Customer(displayName = "Customer", phoneNumber = "", createdAt = sunday.minusDays(4).toInstant().toEpochMilli())
+        val rows = (0..2).map { offset ->
+            FollowUp(customerId = customer.id, purpose = "Follow-up $offset", dueAt = sunday.plusDays(offset.toLong()).toInstant().toEpochMilli(),
+                timezoneId = tz.id)
+        }
+        val call = CallLog(customerId = customer.id, startedAt = customer.createdAt, endedAt = customer.createdAt, outcome = Outcome.RESOLVED,
+            dealAmount = "500.50", dealCurrency = "PKR", outcomeAt = customer.createdAt)
+        val data = Workspace(customers = listOf(customer), followUps = rows, calls = listOf(call))
+        assertEquals(0, journeySnapshot(data, ReportPeriod.TODAY, clock, tz).new)
+        assertEquals(0, journeySnapshot(data, ReportPeriod.LAST_2_DAYS, clock, tz).contacted)
+        val snapshot = journeySnapshot(data, ReportPeriod.LAST_20_DAYS, clock, tz)
+        assertEquals(1, snapshot.new)
+        assertEquals(1, snapshot.contacted)
+        assertEquals("500.50", snapshot.deals.amounts["PKR"])
+        assertEquals(rows[0], remindersFor(data, ReminderDay.YESTERDAY, clock, tz).single().followUp)
+        assertEquals(rows[1], remindersFor(data, ReminderDay.TODAY, clock, tz).single().followUp)
+        assertEquals(rows[2], remindersFor(data, ReminderDay.TOMORROW, clock, tz).single().followUp)
+    }
 }

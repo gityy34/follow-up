@@ -1,7 +1,8 @@
 import {
   stages, outcomes, priorities, reminders, categories, uuid, timezone, workspace, customer, followUp,
   event, day, dateText, dateField, addDays, orderFollow, dayGroup, load, save, visible, report, encrypt, decrypt, validPhone,
-  periods, currencyCodes, entryOutcomes, pendingOutcomes, stageForOutcome, withOutcome, outcomeLabel, completeLinkedFollowUp, resolvePending
+  periods, currencyCodes, entryOutcomes, pendingOutcomes, stageForOutcome, withOutcome, outcomeLabel, completeLinkedFollowUp, resolvePending,
+  greeting, journeySnapshot, remindersFor, reminderDays
 } from './data.js';
 
 const view = document.querySelector('#view');
@@ -12,9 +13,9 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp
 const titles = {
   journey: 'Customer Journey', agenda: 'Follow-up Agenda', customers: 'Customers', detail: 'Customer Detail',
   edit: 'Customer', follow: 'Follow-up Detail', wizard: 'Add Follow-up', session: 'Start Call Session',
-  call: 'Post-Call Reflection', pending: 'Pending Calls', 'pending-result': 'Update Pending Call', performance: 'Performance Coach', settings: 'Settings'
+  call: 'Post-Call Reflection', pending: 'Pending Calls', 'pending-result': 'Update Pending Call', performance: 'Performance Coach', settings: 'Settings', reminders: 'Reminders'
 };
-const nav = [['journey','Journey','⌂'],['customers','Customers','♙'],['agenda','Agenda','▦'],['performance','Performance','↗']];
+const nav = [['journey','Journey','home'],['customers','Customers','person'],['agenda','Agenda','calendar_month'],['performance','Performance','bar_chart']];
 const purposes = ['Discuss proposal','Confirm interest','Share product info','Address concern / issue','Agree next step','Other'];
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 let initializationError = false;
@@ -34,11 +35,18 @@ let toastTimer;
 let pendingRestore;
 let pendingSafety;
 let period = 'today';
+let reminderDay = 'today';
+let initialProfile = false;
 let pendingDraft;
 let limit = 40;
 const filters = { q: '', status: 'OPEN', range: 'All dates', date: day(), priority: 'ANY', archive: 'active' };
 const button = (text, action, id = '', kind = 'outline') =>
   `<button type="button" class="${kind}" data-action="${action}"${id ? ` data-id="${escape(id)}"` : ''}>${escape(text)}</button>`;
+const icon = name => `<span class="neon-icon" aria-hidden="true">${name}</span>`;
+const iconButton = (name, label, action, className = '') =>
+  `<button type="button" class="icon-button ${className}" aria-label="${escape(label)}" data-action="${action}">${icon(name)}</button>`;
+const dots = (label, menu) => `<details class="overflow-menu">
+  <summary class="icon-button" aria-label="${escape(label)}">${icon('more_vert')}</summary><div class="menu-items">${menu}</div></details>`;
 const chip = (text, style = '') => `<span class="chip ${style}">${escape(text)}</span>`;
 const metric = (name, value, icon) => `<div class="metric"><span class="glyph" aria-hidden="true">${icon}</span><b>${value}</b><span>${name}</span></div>`;
 const list = (rows, empty) => rows.length ? `<ul class="plain">${rows.map(row => `<li>${row}</li>`).join('')}</ul>` : `<p class="note">${empty}</p>`;
@@ -106,55 +114,83 @@ function startCall(customerId, followId = '') {
 }
 function applyTheme() {
   const s = data.settings;
-  document.documentElement.dataset.theme = (s.themeMode === 'SYSTEM' ? (themeMedia.matches ? 'DARK' : 'LIGHT') : s.themeMode).toLowerCase();
+  document.documentElement.dataset.theme = (s.themeMode === 'NEON' || s.themeMode === 'DARK' || (s.themeMode === 'SYSTEM' && themeMedia.matches)) ? 'dark' : 'light';
   document.documentElement.dataset.palette = s.selectedPalette;
 }
+function header(w, time) {
+  const title = data.settings.displayName || 'Customer Journey';
+  query('#sidebar-title').textContent = title;
+  document.title = title;
+  const menu = dots('More options','<button type="button" data-nav="settings">Settings</button><button type="button" disabled>Help · Coming soon</button>');
+  const tag = demo ? '<span class="chip">Demo</span>' : '';
+  if (page === 'journey') {
+    const initialsText = initials(data.settings.operatorName || data.settings.displayName) || 'UY';
+    const hello = [greeting(time),data.settings.operatorName].filter(Boolean).join(', ');
+    const date = new Intl.DateTimeFormat('en-GB',{ weekday:'short', month:'short', day:'numeric' }).format(time);
+    const count = remindersFor(w,'today',time).length;
+    return `<div class="top-left"><span class="profile-avatar" aria-hidden="true">${escape(initialsText)}</span><div class="grow title-group">
+      <p class="greeting">${escape(hello)}</p><h1>${escape(title)}</h1><time datetime="${day(time)}">Today · ${date}</time></div></div>
+      <div class="top-right">${tag}<button type="button" class="icon-button reminder-button" data-action="reminders" aria-label="Reminders, ${count} today">
+        ${icon('notifications')}${count ? `<span class="reminder-badge" aria-hidden="true">${count}</span>` : ''}</button>${menu}</div>`;
+  }
+  const screen = page === 'edit' ? (selected ? 'Edit Customer' : 'Add Customer') : titles[page];
+  const right = page === 'reminders' ? iconButton('more_vert','Select reminder day','reminder-period') :
+    nav.some(([route]) => route === page) ? menu : '';
+  return `<div class="top-left">${iconButton('arrow_back','Go back','back')}<h1>${screen}</h1></div><div class="top-right">${tag}${right}</div>`;
+}
+
 function render() {
   applyTheme();
   const w = visible(data,demo);
+  const time = Date.now();
   for (const id of ['side-nav','bottom-nav']) {
-    query('#'+id).innerHTML = nav.map(([route,label,icon]) => `<button class="subtle" data-nav="${route}" ${page === route ? 'aria-current="page"' : ''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('');
+    query('#'+id).innerHTML = nav.map(([route,label,glyph]) => `<button class="subtle" data-nav="${route}" ${page === route ? 'aria-current="page"' : ''}>
+      <span class="nav-icon">${icon(glyph)}</span>${label}</button>`).join('');
   }
-  query('#screen-title').textContent = page === 'edit' ? (selected ? 'Edit Customer' : 'Add Customer') : titles[page];
-  query('#today').textContent = new Intl.DateTimeFormat('en',{ weekday:'long', month:'long', day:'numeric' }).format(new Date());
-  query('#back').hidden = nav.some(([route]) => route === page);
-  query('#demo-label').hidden = !demo;
+  query('#app-header').innerHTML = header(w,time);
   const screens = {
-    journey: () => journey(w), agenda: () => agenda(w), customers: () => customers(w), session: () => customers(w,true),
+    journey: () => journey(w,time), reminders: () => reminderScreen(w,time), agenda: () => agenda(w), customers: () => customers(w), session: () => customers(w,true),
     edit: () => customerForm(owner(selected)), detail: () => detail(owner(selected),w), follow: () => followDetail(follow(selected)),
     wizard: () => wizardScreen(w), call: callScreen, pending: () => pendingList(w), 'pending-result': pendingScreen, performance: () => performance(w), settings
   };
   view.innerHTML = (initializationError ? '<p class="card error">Saved records could not be loaded. Editing is paused to protect your data.</p>' : '') + screens[page]();
-  requestAnimationFrame(() => { drawRoad(); drawTrend(w); updateTimer(); });
+  requestAnimationFrame(() => { drawTrend(w); updateTimer(); });
 }
 
-function journey(w) {
-  const time = Date.now();
-  const active = w.customers.filter(c => !c.archived);
-  const owners = new Set(active.map(c => c.id));
-  const open = w.followUps.filter(f => f.status === 'OPEN' && owners.has(f.customerId)).sort(orderFollow);
+function journey(w, time) {
+  const snapshot = journeySnapshot(w,period,time);
   const calls = w.calls.filter(c => day(c.endedAt) === day(time));
-  const overdue = open.filter(f => f.dueAt < time).length;
-  const soon = open[0];
-  const due = open.filter(f => day(f.dueAt) === day(time)).length;
+  const active = new Set(w.customers.filter(c => !c.archived).map(c => c.id));
+  const due = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN' && day(f.dueAt) === day(time)).length;
   const review = calls.filter(c => c.outcome === 'ISSUE').length;
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning!' : hour < 18 ? 'Good afternoon!' : 'Good evening!';
-  const check = Object.entries(stages).map(([id,label]) => `<div class="checkpoint"><span>${label}</span><b>${active.filter(c => c.stage === id).length}</b></div>`).join('');
   const pending = w.calls.filter(c => c.outcome === 'PENDING').length;
-  return `<div class="stack"><div class="columns"><div class="stack"><div class="stats call-stats">
-    ${metric('Today’s call goal',w.settings.goal,'◎')}${metric('Calls made today',calls.length,'☎')}</div>
-    <div class="actions">${button('Start Call Session','session','','button')}${button('Pending Calls ('+pending+')','pending-list')}</div>
-    </div><section class="card"><h2>Deal Summary</h2>${periodPicker()}${dealSummary(report(w,period,time).deals)}</section></div>
-    <div class="columns"><div class="stack"><section class="hero"><canvas id="road" aria-hidden="true"></canvas>
-      <h2>${greeting}</h2><p>Here’s your customer journey today.</p><div class="checkpoints">${check}</div></section>
-    <div class="stats call-stats">${metric('Follow-ups due',due,'▦')}${metric('Needs review',review,'⚑')}</div>
-    </div><div class="stack"><section class="card"><h2>Next Best Action</h2><p>${soon ? escape(owner(soon.customerId)?.displayName + ' · ' + soon.purpose) : 'Add a customer and schedule your next call.'}</p>
-      <p>${chip(overdue + ' overdue','urgent')} ${chip((open.length-overdue) + ' upcoming')}</p>
-      ${soon ? button('Open Follow-up','open-follow',soon.id,'button wide') : button('Add Customer','edit-customer','','button wide')}
-      <div class="actions">${button('+ Add Follow-up','add-follow')}</div></section>
-    <section class="card"><div class="card-head"><h2>Recent Activity</h2><button class="link" data-nav="agenda">Open Agenda</button></div>
-      ${list(w.timeline.slice(0,5).map(e => row(e.eventType, owner(e.customerId)?.displayName + ' · ' + dateText(e.eventTime), 'open-customer',e.customerId)), 'Saved activity will appear here.')}</section></div></div></div>`;
+  const checkpoint = (text,count,glyph,place) => `<div class="checkpoint checkpoint-${place}">
+    <div class="checkpoint-label">${icon(glyph)}<div><span>${text}</span><b>${count}</b></div></div><i class="checkpoint-dot" aria-hidden="true"></i></div>`;
+  const amounts = Object.entries(snapshot.deals.amounts);
+  const tiles = [['Calls',calls.length,'call','today-calls'],['Follow-ups',due,'calendar_month','today-agenda'],['Needs review',review,'flag','today-calls']];
+  return `<div class="neon-dashboard"><section class="hero" aria-label="Customer journey, ${periods[period]}">
+    <div class="hero-copy"><h2>${greeting(time)}!</h2><p>${period === 'today' ? 'Here’s your customer journey today.' : 'Customer journey · ' + periods[period]}</p></div>
+    ${checkpoint('New',snapshot.newCustomers,'person_add','new')}${checkpoint('Contacted',snapshot.contacted,'call','contacted')}
+    ${checkpoint('Follow-up',snapshot.followUps,'calendar_month','follow')}${checkpoint('Resolved',snapshot.deals.successful,'check_circle','resolved')}
+    ${iconButton('more_vert','Select journey period','journey-period','road-more')}</section>
+    <div class="stack neon-summary">
+      <section class="card neon-payment"><h2>Deal amount</h2><div class="payment-values">${amounts.length ? amounts.map(([currency,amount]) =>
+        `<strong>${escape(currency)} ${escape(amount)}</strong>`).join('') : `<strong>${escape(w.settings.currency)} 0</strong>`}</div></section>
+      <section class="card neon-mission"><div class="mission-heading"><div class="line">${icon('track_changes')}<h2>Today’s Mission</h2></div>
+        ${dots('Mission options', `<button type="button" data-action="session">Start call session</button><button type="button" data-action="pending-list">Pending calls (${pending})</button><button type="button" data-nav="settings">Change call goal</button>`)}</div>
+        <p class="note">Complete ${w.settings.goal} calls today.</p><progress aria-label="Daily call goal" value="${Math.min(calls.length,w.settings.goal)}" max="${w.settings.goal}"></progress>
+        <p class="note">${calls.length} of ${w.settings.goal} calls completed</p></section>
+      <div class="stats">${tiles.map(([label,count,glyph,action]) => `<button type="button" class="metric neon-metric" data-action="${action}">${icon(glyph)}<b>${count}</b><span>${label}</span></button>`).join('')}</div>
+    </div></div>`;
+}
+
+function reminderScreen(w, time) {
+  const rows = remindersFor(w,reminderDay,time);
+  return `<section class="card narrow"><h2>${reminderDays[reminderDay]} · ${rows.length} reminders</h2>
+    ${list(rows.slice(0,limit).map(({followUp:f,at}) => row(f.purpose,
+      [owner(f.customerId)?.displayName,'Reminder · '+dateText(at),'Follow-up due · '+dateText(f.dueAt)].filter(Boolean).join(' · '),
+      'open-follow',f.id,'›',icon('notifications'))),'No reminders scheduled for this day.')}
+    ${rows.length > limit ? button('Show more','more') : ''}</section>`;
 }
 function canvas(id) {
   const el = query(id);
@@ -166,18 +202,6 @@ function canvas(id) {
   const ctx = el.getContext('2d');
   ctx.scale(ratio,ratio);
   return [ctx, rect.width, rect.height];
-}
-function drawRoad() {
-  const surface = canvas('#road');
-  if (!surface) return;
-  const [c,w,h] = surface;
-  c.beginPath();
-  c.moveTo(w*.13,h*.38); c.bezierCurveTo(w*.05,h*.5,w*1.04,h*.45,w*.85,h*.62);
-  c.bezierCurveTo(w*.77,h*.72,w*.07,h*.66,w*.13,h*.79);
-  c.bezierCurveTo(w*.19,h*.95,w*.56,h*.99,w*.76,h*.86);
-  c.lineCap = 'round'; c.strokeStyle = '#ece4ff41'; c.lineWidth = 28; c.stroke();
-  c.strokeStyle = '#f7e9ff8c'; c.lineWidth = 10; c.stroke();
-  c.strokeStyle = '#ffffffb5'; c.lineWidth = 1.5; c.setLineDash([6,6]); c.stroke();
 }
 function customers(w, session = false) {
   const term = filters.q.toLowerCase().trim();
@@ -370,8 +394,11 @@ function drawTrend(w) {
 }
 function settings() {
   const s = data.settings;
-  return `<div class="narrow stack"><section class="card"><h2>Appearance</h2><div class="fields">
-    ${select('Theme','themeMode',{SYSTEM:'System',LIGHT:'Light',DARK:'Dark'},s.themeMode,'data-setting')}
+  return `<div class="narrow stack"><section class="card"><h2>Profile</h2>
+    <p>${escape(s.operatorName || 'Your name has not been set.')}</p>
+    <p class="note">${escape(s.displayName || 'Customer Journey')}</p>
+    ${button('Edit name and display','edit-profile')}</section><section class="card"><h2>Appearance</h2><div class="fields">
+    ${select('Theme','themeMode',{NEON:'Neon',SYSTEM:'System',LIGHT:'Light',DARK:'Dark'},s.themeMode,'data-setting')}
     ${select('Palette','selectedPalette',prefs(['Violet','Ocean','Forest']),s.selectedPalette,'data-setting')}
     ${select('Deal currency','currency',prefs([...new Set([...currencyCodes,s.currency])]),s.currency,'data-setting')}
     ${select('Daily goal','goal',prefs([...new Set([1,3,5,10,15,20,30,50,s.goal])].map(String)),String(s.goal),'data-setting')}</div>
@@ -393,6 +420,24 @@ function openModal(title, body) {
   modal.innerHTML = `<div class="stack"><h2 id="modal-title">${escape(title)}</h2>${body}</div>`;
   if (!modal.open) modal.showModal();
 }
+function openProfile(initial) {
+  initialProfile = initial;
+  const s = data.settings;
+  openModal(initial ? 'Make it yours' : 'Edit profile',`<form class="stack" data-form="profile">
+    ${input('Your name','operatorName',s.operatorName, 'maxlength="60" autocomplete="given-name" ' + (initial ? 'required' : ''))}
+    ${input('Dashboard display name (optional)','displayName',s.displayName, 'maxlength="60" autocomplete="off"')}
+    <p data-error class="error" role="alert"></p>
+    <div class="actions">${button(initial ? 'Not now' : 'Cancel',initial ? 'skip-profile' : 'close-modal')}<button class="button">Save</button></div>
+  </form>`);
+}
+
+function saveProfile(name, display, message) {
+  write(next => Object.assign(next.settings,{operatorName:name,displayName:display,profileConfigured:true}),message);
+  initialProfile = false;
+  modal.close();
+  render();
+}
+
 function confirmAction(title, detail, action) {
   openModal(title,`<p>${escape(detail)}</p><div class="actions">${button('Cancel','close-modal')}${button('Confirm',action,'','button')}</div>`);
 }
@@ -467,6 +512,18 @@ function mutateFollow(f) {
 }
 const actions = {
   back: handleBack,
+  'edit-profile': () => openProfile(false),
+  'skip-profile': () => saveProfile('','',''),
+  'journey-period': () => openModal('Journey period', periodPicker()),
+  reminders: () => { reminderDay = 'today'; go('reminders'); },
+  'reminder-period': () => openModal('Reminder day', `<div class="periods" role="group" aria-label="Reminder day">
+    ${Object.entries(reminderDays).map(([id,label]) =>
+      `<button type="button" class="outline" data-action="set-reminder-period" data-id="${id}" aria-pressed="${reminderDay === id}">${label}</button>`).join('')}</div>`),
+  'set-reminder-period': id => {
+    if (Object.hasOwn(reminderDays,id)) { reminderDay=id; limit=40; modal.close(); render(); }
+  },
+  'today-calls': () => { period='today'; go('performance'); },
+  'today-agenda': () => { filters.range='Day'; filters.date=day(); filters.status='OPEN'; filters.q=''; go('agenda'); },
   'edit-customer': id => go('edit',id),
   'open-customer': id => go('detail',id),
   'open-follow': id => go('follow',id),
@@ -480,7 +537,7 @@ const actions = {
     if (!call.more && !entryOutcomes.slice(0,2).includes(call.outcome)) call.outcome = '';
     render();
   },
-  period: id => { if (Object.hasOwn(periods,id)) { period=id; render(); } },
+  period: id => { if (Object.hasOwn(periods,id)) { period=id; if (modal.open) modal.close(); render(); } },
   'start-call': id => startCall(id),
   'start-follow-call': id => { const f = follow(id); if (f) startCall(f.customerId,id); },
   tab: id => { tab = id; limit = 40; render(); },
@@ -555,6 +612,11 @@ const actions = {
 };
 
 const forms = {
+  profile: values => {
+    const name = values.operatorName.trim().slice(0,60);
+    if (initialProfile && !name) throw new Error('Enter your name or choose Not now.');
+    saveProfile(name,values.displayName.trim().slice(0,60),'Profile saved.');
+  },
   customer: values => {
     const previous = owner(selected);
     const c = previous ? { ...previous } : customer({ demo });
@@ -632,8 +694,9 @@ const forms = {
 };
 
 document.addEventListener('click', async e => {
+  document.querySelectorAll('.overflow-menu[open]').forEach(menu => { if (!menu.contains(e.target) || !e.target.closest('summary')) menu.open = false; });
   const navButton = e.target.closest('[data-nav]');
-  if (navButton) { filters.q = ''; go(navButton.dataset.nav); return; }
+  if (navButton) { e.preventDefault(); filters.q = ''; go(navButton.dataset.nav); return; }
   const control = e.target.closest('[data-action]');
   if (!control) return;
   try { await actions[control.dataset.action]?.(control.dataset.id || ''); }
@@ -707,7 +770,10 @@ document.addEventListener('submit', async e => {
     else tell(error.message || 'The change could not be saved.');
   } finally { if (submit) submit.disabled=false; }
 });
-modal.addEventListener('close', () => { pendingRestore = null; pendingSafety = null; resetPassword(); });
+modal.addEventListener('cancel', e => {
+  if (initialProfile) { e.preventDefault(); actions['skip-profile'](); }
+});
+modal.addEventListener('close', () => { initialProfile = false; pendingRestore = null; pendingSafety = null; resetPassword(); });
 window.addEventListener('popstate', e => {
   const next = e.state?.page;
   if (next && Object.hasOwn(titles,next)) { page=next; selected=e.state.id || ''; limit=40; render(); }
@@ -715,9 +781,14 @@ window.addEventListener('popstate', e => {
 });
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt=e; });
 window.addEventListener('appinstalled', () => { installPrompt=null; if (modal.open) modal.close(); });
-window.addEventListener('resize', () => { drawRoad(); drawTrend(visible(data,demo)); });
+window.addEventListener('resize', () => { drawTrend(visible(data,demo)); });
 themeMedia.addEventListener('change',render);
 setInterval(updateTimer,1000);
+const refreshDashboard = () => {
+  if (page === 'journey' && !modal.open && !query('.overflow-menu[open]')) render();
+};
+setInterval(refreshDashboard,60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDashboard(); });
 window.addEventListener('storage', e => {
   if (e.key !== 'you-follow-ups.v1') return;
   try { data=load(localStorage); initializationError=false; render(); }
@@ -726,4 +797,5 @@ window.addEventListener('storage', e => {
 fetch('downloads/android-builds.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(meta=>{ downloads=meta?.androidApks===true; }).catch(()=>{});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 const initial = location.hash.slice(1);
-go(['journey','agenda','customers','performance','settings','pending'].includes(initial) ? initial : 'journey','',true);
+go(['journey','agenda','customers','performance','settings','pending','reminders'].includes(initial) ? initial : 'journey','',true);
+if (!initializationError && !data.settings.profileConfigured) openProfile(true);

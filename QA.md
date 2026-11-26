@@ -22,3 +22,9 @@ Android builds use compile and target SDK 36, minimum Android API 26, JDK 21 and
 - The SQLite 2 → 3 migration preserved a pre-existing call and its notes. The new amount and currency fields remain empty for legacy calls that never recorded an amount.
 - The browser data suite and DOM smoke flow passed for Pending, mandatory Successful amount, exact decimals, date filters, and currency changes. Existing deals retain their original labels and each currency total stays separate.
 - On-device Android execution of the new Pending and payment UI remains pending. The repository instrumentation suite was built.
+
+## Version 1.3.0 neon dashboard
+
+- Ten Android JVM tests passed. The new tests cover local-time greetings, winter and summer boundaries, two- and twenty-day road metrics, and reminder date filtering on a Sunday.
+- The browser data suite and DOM smoke flow passed for first-run name setup, the saved display name, hidden call controls, report periods, reminder day filters and opening follow-up details. The Pending and multi-currency deal flows also passed.
+- Debug and signed release builds, signed bundle packaging, Android test APK compilation, and debug lint passed. The environment blocked the local visual preview port. Native layouts and notifications remain unverified on a physical Android device.

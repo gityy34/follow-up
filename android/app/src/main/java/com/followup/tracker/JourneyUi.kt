@@ -3,8 +3,14 @@ package com.followup.tracker
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.DateRange
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,8 +20,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -25,6 +31,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val displayDateFormat = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.ENGLISH)
@@ -36,8 +43,12 @@ internal fun initials(value: String) = value.trim().split(Regex("\\s+")).take(2)
 internal fun JourneyTheme(dark: Boolean, palette: String, content: @Composable () -> Unit) {
     val lightPrimary = when (palette) { "Ocean" -> Color(0xff285ab1); "Forest" -> Color(0xff1c6956); else -> Color(0xff662fcd) }
     val darkPrimary = when (palette) { "Ocean" -> Color(0xffafc8ff); "Forest" -> Color(0xff8ed4b9); else -> Color(0xffd4b7ff) }
-    val colors = if (dark) darkColorScheme(primary = darkPrimary, background = Color(0xff151023), surface = Color(0xff1e172e),
-        surfaceVariant = Color(0xff302344), onSurface = Color(0xfff2ebfd), onSurfaceVariant = Color(0xffdbcde9))
+    val colors = if (dark) darkColorScheme(
+        primary = darkPrimary, onPrimary = Color(0xff28164c), primaryContainer = Color(0xff392b68), onPrimaryContainer = Color(0xffeee3ff),
+        secondaryContainer = Color(0xff413572), onSecondaryContainer = Color(0xfff3eaff), tertiary = Color(0xff86eee9),
+        background = Color(0xff15182d), onBackground = Color(0xfff2efff), surface = Color(0xff202440),
+        surfaceVariant = Color(0xff2c3153), onSurface = Color(0xfff3f0ff), onSurfaceVariant = Color(0xffccd0ee),
+        outline = Color(0xff858abd), outlineVariant = Color(0xff383d62), error = Color(0xffffaebf))
     else lightColorScheme(primary = lightPrimary, background = Color(0xfff7f4ff), surface = Color.White,
         surfaceVariant = Color(0xffeee7fa), onSurface = Color(0xff241634), onSurfaceVariant = Color(0xff514562),
         primaryContainer = Color(0xffeee1ff), onPrimaryContainer = Color(0xff31135e), error = Color(0xffa41c4b))
@@ -52,6 +63,14 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
     var backTo by rememberSaveable { mutableStateOf("Journey") }
     var pendingId by rememberSaveable { mutableStateOf("") }
     var period by rememberSaveable { mutableStateOf(ReportPeriod.TODAY) }
+    var reminderDay by rememberSaveable { mutableStateOf(ReminderDay.TODAY) }
+    var currentTime by remember { mutableLongStateOf(now()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentTime = now()
+            delay(60_000L - currentTime % 60_000L)
+        }
+    }
     var callParent by rememberSaveable { mutableStateOf("Customer Detail") }
     var followParent by rememberSaveable { mutableStateOf("Agenda") }
     var editingParent by rememberSaveable { mutableStateOf("Customers") }
@@ -69,13 +88,21 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
     val customer = workspace.customers.firstOrNull { it.id == customerId }
     val follow = workspace.followUps.firstOrNull { it.id == followId }
     val top = setOf("Journey", "Customers", "Agenda", "Performance")
+    val activeTime = maxOf(currentTime, now())
+    val timezone = zone()
+    val todayReminders = remember(data, timezone, localDay(activeTime)) { remindersFor(data, ReminderDay.TODAY, activeTime, timezone) }
+    fun startSession() {
+        backTo = "Journey"
+        if (visible.any { !it.archived }) route = "Start Call Session"
+        else { customerId = ""; editingParent = "Journey"; route = "Customer Form" }
+    }
     fun back() {
         route = when (route) {
             "Add Follow-up" -> wizardParent
             "Post-Call Reflection" -> callParent
             "Follow-up Detail" -> followParent
             "Customer Form" -> editingParent
-            "Settings", "Pending" -> "Journey"
+            "Settings", "Pending", "Reminders" -> "Journey"
             "Update Pending Call" -> "Pending"
             in top -> "Journey"
             else -> backTo
@@ -134,38 +161,98 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
             dismissIncoming()
         }
     }
+    fun saveProfile(name: String, display: String) {
+        scope.launch {
+            try {
+                repo.settings.set(repo.settings.current().copy(
+                    operatorName = name, displayName = display, profileConfigured = true))
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { snackbar.showSnackbar("The profile could not be saved.") }
+        }
+    }
+    if (route == "Journey" && !workspace.settings.profileConfigured) {
+        ProfileDialog(workspace.settings, true, { saveProfile("", "") }, ::saveProfile)
+    }
     BackHandler(route != "Journey", onBack = ::back)
     Scaffold(
         topBar = {
             Surface(color = MaterialTheme.colorScheme.background) {
-                Row(Modifier.statusBarsPadding().fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { if (route in top) route = "Settings" else back() }) {
-                        Text(if (route in top) "Settings" else "‹ Back")
+                Row(Modifier.statusBarsPadding().fillMaxWidth().heightIn(min = 74.dp).padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    if (route == "Journey") {
+                        val initials = initials(workspace.settings.operatorName.ifBlank { workspace.settings.displayName }).ifBlank { "UY" }
+                        Surface(Modifier.size(44.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                            Box(contentAlignment = Alignment.Center) { Text(initials, fontWeight = FontWeight.Bold) }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            val greeting = greeting(activeTime, zone())
+                            Text(listOf(greeting, workspace.settings.operatorName).filter { it.isNotBlank() }.joinToString(", "),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(workspace.settings.displayName.ifBlank { "Customer Journey" }, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("Today · " + localDay(activeTime).format(DateTimeFormatter.ofPattern("EEE, d MMM", Locale.ENGLISH)),
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { reminderDay = ReminderDay.TODAY; route = "Reminders" }) {
+                            BadgedBox(badge = { if (todayReminders.isNotEmpty()) Badge { Text(todayReminders.size.toString()) } }) {
+                                Icon(Icons.Outlined.Notifications, "Reminders, ${todayReminders.size} today")
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Go back") }
+                        Text(if (route == "Performance") "Performance Coach" else route, modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
-                    Text(if (route == "Journey") "Customer Journey" else if (route == "Performance") "Performance Coach" else route,
-                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    if (activeDemo) Text("Demo", Modifier.padding(end = 8.dp), color = MaterialTheme.colorScheme.primary)
+                    if (activeDemo) Text("Demo", Modifier.padding(end = 3.dp), color = MaterialTheme.colorScheme.primary)
+                    if (route == "Reminders") {
+                        DotMenu("Select reminder day") { close ->
+                            ReminderDay.entries.forEach { option ->
+                                DropdownMenuItem(text = { Text(if (option == reminderDay) "✓  ${option.title}" else option.title) },
+                                    onClick = { close(); reminderDay = option })
+                            }
+                        }
+                    } else if (route in top) {
+                        DotMenu("More options") { close ->
+                            DropdownMenuItem(text = { Text("Settings") }, onClick = { close(); route = "Settings" })
+                            DropdownMenuItem(text = { Text("Help · Coming soon") }, enabled = false, onClick = {})
+                        }
+                    }
                 }
             }
         },
         bottomBar = {
             if (route in top) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                listOf("Journey" to "⌂", "Customers" to "♙", "Agenda" to "▦", "Performance" to "↗").forEach { (label, icon) ->
-                    NavigationBarItem(selected = route == label, onClick = { route = label }, icon = { Text(icon) }, label = { Text(label, maxLines = 1) })
+                listOf("Journey", "Customers", "Agenda", "Performance").forEach { label ->
+                    NavigationBarItem(selected = route == label, onClick = { route = label }, icon = {
+                        when (label) {
+                            "Journey" -> Icon(Icons.Outlined.Home, null)
+                            "Customers" -> Icon(Icons.Outlined.Person, null)
+                            "Agenda" -> Icon(Icons.Outlined.DateRange, null)
+                            else -> TrendGlyph()
+                        }
+                    }, label = { Text(label, maxLines = 1) })
                 }
             }
         },
         snackbarHost = { SnackbarHost(snackbar) }
     ) { bars ->
-        Column(Modifier.fillMaxSize().padding(bars).imePadding().verticalScroll(remember(route) { ScrollState(0) })
-            .padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
+        Box(Modifier.fillMaxSize().padding(bars), contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.widthIn(max = 630.dp).fillMaxSize().imePadding().verticalScroll(remember(route) { ScrollState(0) })
+                .padding(horizontal = 13.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             key(route) {
                 when (route) {
-                    "Journey" -> Mission(data, { route = "Agenda" }, { wizard() }, {
-                        if (visible.any { !it.archived }) { backTo = "Journey"; route = "Start Call Session" }
-                        else { customerId = ""; backTo = "Journey"; editingParent = "Journey"; route = "Customer Form" }
-                    }, ::viewCustomer, { route = "Pending" }, period, { period = it })
+                    "Journey" -> NeonJourney(data, activeTime, period, { period = it }, ::startSession,
+                        { route = "Pending" }, { route = "Settings" }, { period = ReportPeriod.TODAY; route = "Performance" }, { route = "Agenda" })
+                    "Reminders" -> {
+                        val rows = remember(data, reminderDay, timezone, localDay(activeTime)) { remindersFor(data, reminderDay, activeTime, timezone) }
+                        ReminderList(data, rows, reminderDay) { row ->
+                            backTo = "Reminders"; followParent = "Reminders"; customerId = row.customerId
+                            followId = row.id; route = "Follow-up Detail"
+                        }
+                    }
                     "Agenda" -> Agenda(data, { wizard() }, { row ->
                         backTo = "Agenda"; followParent = "Agenda"; customerId = row.customerId; followId = row.id; route = "Follow-up Detail"
                     })
@@ -222,6 +309,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                     "Performance" -> Performance(data, period, { period = it })
                     "Settings" -> SettingsPanel(workspace, model, secureDevice, activeDemo, { activeDemo = it }, snackbar)
                 }
+                }
             }
         }
     }
@@ -234,7 +322,8 @@ internal fun Section(text: String) {
 
 @Composable
 internal fun Panel(content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    OutlinedCard(Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
     }
 }
@@ -259,91 +348,6 @@ internal fun <T> Choice(label: String, options: List<T>, selected: T, title: (T)
         DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option -> DropdownMenuItem(text = { Text(title(option)) }, onClick = { expanded = false; onSelect(option) }) }
         }
-    }
-}
-
-@Composable
-private fun Metric(label: String, value: Int, modifier: Modifier) {
-    Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 10.dp)) {
-            Text(value.toString(), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            Text(label, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun Mission(data: Workspace, agenda: () -> Unit, add: () -> Unit, start: () -> Unit, customer: (String) -> Unit,
-                    pending: () -> Unit, period: ReportPeriod, setPeriod: (ReportPeriod) -> Unit) {
-    val time = now()
-    val today = localDay(time)
-    val active = data.customers.filterNot { it.archived }
-    val activeIds = active.mapTo(hashSetOf()) { it.id }
-    val open = data.followUps.filter { it.status == FollowStatus.OPEN && it.customerId in activeIds }
-    val overdue = open.count { it.dueAt < time }
-    val due = open.count { localDay(it.dueAt) == today }
-    val completed = data.calls.count { localDay(it.endedAt) == today }
-    val needsReview = data.calls.count { localDay(it.endedAt) == today && it.outcome == Outcome.ISSUE }
-    val closest = open.sortedWith(compareBy<FollowUp> { it.dueAt }.thenByDescending { it.priority }).firstOrNull()
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Metric("Today's call goal", data.settings.goal, Modifier.weight(1f))
-        Metric("Calls made today", completed, Modifier.weight(1f))
-    }
-    Primary("Start Call Session", onClick = start)
-    OutlinedButton(onClick = pending, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-        Text("Pending Calls (${data.calls.count { it.outcome == Outcome.PENDING }})")
-    }
-    Panel {
-        Section("Deal Summary")
-        PeriodPicker(period, setPeriod)
-        DealSummary(report(data, period, time, zone(), demo = data.customers.firstOrNull()?.demo == true).deals)
-    }
-    Card(Modifier.fillMaxWidth()) {
-        Box(Modifier.background(Brush.linearGradient(listOf(Color(0xff5f32c7), Color(0xff7249c4), Color(0xff494eb0), Color(0xff216f91))))) {
-            Canvas(Modifier.matchParentSize()) {
-                val path = Path().apply {
-                    moveTo(size.width * .16f, size.height * .40f)
-                    cubicTo(size.width * 1.12f, size.height * .44f, size.width * .90f, size.height * .57f, size.width * .48f, size.height * .61f)
-                    cubicTo(size.width * -.04f, size.height * .67f, size.width * .10f, size.height * .79f, size.width * .75f, size.height * .87f)
-                }
-                drawPath(path, Color.White.copy(alpha = .18f), style = Stroke(width = 27.dp.toPx(), cap = StrokeCap.Round))
-                drawPath(path, Color.White.copy(alpha = .7f), style = Stroke(width = 1.5.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 7f))))
-            }
-            Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                val hour = java.time.LocalTime.now().hour
-                val greeting = if (hour < 12) "Good morning!" else if (hour < 18) "Good afternoon!" else "Good evening!"
-                Text(greeting, style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
-                Text("Here’s your customer journey today.", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                Stage.entries.forEachIndexed { index, stage ->
-                    Surface(Modifier.align(if (index % 2 == 0) Alignment.Start else Alignment.End)
-                        .padding(start = if (index % 2 == 0) 20.dp else 0.dp, end = if (index % 2 != 0) 19.dp else 0.dp),
-                        shape = MaterialTheme.shapes.medium, color = Color(0xfff4edff), contentColor = Color(0xff23123c)) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 5.dp)) {
-                            Text(stage.title, style = MaterialTheme.typography.labelMedium)
-                            Text(active.count { it.stage == stage }.toString(), fontWeight = FontWeight.Black,
-                                style = MaterialTheme.typography.titleLarge)
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Metric("Follow-ups due", due, Modifier.weight(1f))
-        Metric("Needs review", needsReview, Modifier.weight(1f))
-    }
-    Panel {
-        Section("Next Best Action")
-        Text(closest?.let { "${active.firstOrNull { c -> c.id == it.customerId }?.displayName.orEmpty()} · ${it.purpose}" }
-            ?: "Add a customer and schedule the next call.")
-        Text("$overdue overdue · ${open.size - overdue} upcoming", style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = agenda) { Text("Open Agenda") }
-    }
-    OutlinedButton(onClick = add, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("+ Add Follow-up") }
-    Section("Recent Activity")
-    if (data.timeline.isEmpty()) Text("Saved activity will appear here.")
-    data.timeline.take(4).forEach { event ->
-        TextButton(onClick = { customer(event.customerId) }) { Text("${event.eventType} · ${data.customers.firstOrNull { it.id == event.customerId }?.displayName.orEmpty()}") }
     }
 }
 

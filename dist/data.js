@@ -3,7 +3,7 @@ export const outcomes = { RESOLVED: 'Successful / Resolved', FOLLOW_UP: 'Follow-
 export const priorities = { NORMAL: 'Normal', HIGH: 'High priority', URGENT: 'Urgent' };
 export const reminders = { DEFAULT: 'Default', DAY: 'One day before', SAME_DAY: 'Same day at 9 AM', HOUR: 'One hour before', SHORT: '15 minutes before', CUSTOM: 'Custom date and time', OFF: 'Off' };
 export const categories = ['Waiting for customer decision', 'Need more information', 'Price / budget concerns', 'Technical issue', 'Other'];
-export const defaults = { themeMode: 'SYSTEM', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR' };
+export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false };
 const key = 'you-follow-ups.v1';
 export const uuid = () => crypto.randomUUID();
 export const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -75,7 +75,79 @@ export function load(storage) {
 const validId = value => typeof value === 'string' && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(value);
 const text = (value, maximum) => typeof value === 'string' && value.length <= maximum;
 const time = value => Number.isSafeInteger(value) && value > 0 && value <= 8640000000000000;
-export const periods = { today: 'Today', '24h': 'Last 24 Hours', '7d': 'Last 7 Days', '30d': 'Last 30 Days' };
+export const periods = {
+  today: 'Today', '24h': 'Last 24 Hours', '2d': 'Last 2 Days',
+  '7d': 'Last 7 Days', '20d': 'Last 20 Days', '30d': 'Last 30 Days'
+};
+const periodDays = { today: 1, '24h': 1, '2d': 2, '7d': 7, '20d': 20, '30d': 30 };
+export const reminderDays = { yesterday: 'Yesterday', today: 'Today', tomorrow: 'Tomorrow' };
+
+export function greeting(time) {
+  const local = new Date(time);
+  const hour = local.getHours();
+  const summer = local.getMonth() >= 3 && local.getMonth() <= 8;
+  if (hour >= 4 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < (summer ? 18 : 17)) return 'Good afternoon';
+  if (hour >= (summer ? 18 : 17) && hour < (summer ? 21 : 20)) return 'Good evening';
+  return 'Good night';
+}
+
+function reportStart(period, now) {
+  return period === '24h' ? now - 86400000 : new Date(day(addDays(now, -(periodDays[period] ?? 1) + 1)) + 'T00:00:00').getTime();
+}
+
+export function journeySnapshot(data, period, now = Date.now()) {
+  const from = reportStart(period, now);
+  const end = period === '24h' ? now + 1 : new Date(day(addDays(now,1)) + 'T00:00:00').getTime();
+  const activeIds = new Set(data.customers.filter(c => !c.archived).map(c => c.id));
+  return {
+    newCustomers: data.customers.filter(c => c.createdAt >= from && c.createdAt <= now).length,
+    contacted: new Set(data.calls.filter(c => c.endedAt >= from && c.endedAt <= now).map(c => c.customerId)).size,
+    followUps: data.followUps.filter(f => activeIds.has(f.customerId) && f.status !== 'DELETED' && f.dueAt >= from && f.dueAt < end).length,
+    deals: dealTotals(data.calls,from,now+1)
+  };
+}
+
+const wallFormatters = new Map();
+function wallTime(epoch, zone) {
+  if (!wallFormatters.has(zone)) wallFormatters.set(zone,new Intl.DateTimeFormat('en-CA',{
+    timeZone:zone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit',
+    fractionalSecondDigits:3, hourCycle:'h23'
+  }));
+  const parts = Object.fromEntries(wallFormatters.get(zone).formatToParts(epoch).map(p => [p.type,p.value]));
+  return Date.UTC(+parts.year,+parts.month-1,+parts.day,+parts.hour,+parts.minute,+parts.second,+parts.fractionalSecond);
+}
+
+function instantForWall(wall, zone) {
+  const probes = [wall - 129600000, wall, wall + 129600000];
+  const candidates = [...new Set(probes.map(epoch => wall - (wallTime(epoch,zone)-epoch)))].sort((a,b) => a-b);
+  return candidates.find(epoch => wallTime(epoch,zone) === wall) ??
+    candidates.find(epoch => wallTime(epoch,zone) >= wall) ?? candidates[0];
+}
+
+export function reminderTime(row, defaultRule = 'DAY') {
+  const policy = row.reminderPolicy === 'DEFAULT' ? defaultRule : row.reminderPolicy;
+  if (policy === 'OFF') return null;
+  if (policy === 'CUSTOM') return row.customReminderAt;
+  if (policy === 'SHORT') return row.dueAt - 900000;
+  if (policy === 'HOUR') return row.dueAt - 3600000;
+  const zone = row.timezoneId;
+  const wall = new Date(wallTime(row.dueAt,zone));
+  if (policy === 'SAME_DAY') {
+    wall.setUTCHours(9,0,0,0);
+    return Math.min(row.dueAt,instantForWall(wall.getTime(),zone));
+  }
+  wall.setUTCDate(wall.getUTCDate()-1);
+  return instantForWall(wall.getTime(),zone);
+}
+
+export function remindersFor(data, which = 'today', now = Date.now()) {
+  const target = day(addDays(now,{yesterday:-1,today:0,tomorrow:1}[which] ?? 0));
+  const ids = new Set(data.customers.filter(c => !c.archived).map(c => c.id));
+  return data.followUps.filter(f => ids.has(f.customerId) && f.status !== 'DELETED').map(f => ({
+    followUp:f, at:f.alertedAt ?? (f.status === 'DONE' ? null : f.snoozedUntil ?? reminderTime(f,data.settings.defaultReminderOffset))
+  })).filter(r => Number.isFinite(r.at) && day(r.at) === target).sort((a,b) => a.at-b.at || a.followUp.dueAt-b.followUp.dueAt);
+}
 export const pendingOutcomes = ['RESOLVED', 'CANCELLED', 'OTHER'];
 export const entryOutcomes = ['RESOLVED', 'PENDING', 'FOLLOW_UP', 'HANG_UP', 'NO_ANSWER', 'ISSUE', 'CANCELLED', 'OTHER'];
 export const stageForOutcome = {
@@ -196,9 +268,11 @@ export function validate(data) {
       c.outcome === 'RESOLVED' && typeof c.dealAmount === 'string' && normalizeAmount(c.dealAmount) === c.dealAmount && validCurrency(c.dealCurrency)));
   unique(data.timeline, e => records.has(e.customerId) && text(e.eventType,120) && text(e.referenceId,120) && typeof e.displayPayload === "string" && time(e.eventTime));
   const settings = { ...defaults, ...data.settings };
-  if (!['SYSTEM','LIGHT','DARK'].includes(settings.themeMode) || !['Violet','Ocean','Forest'].includes(settings.selectedPalette) ||
+  if (settings.themeMode === 'SYSTEM' && !Object.hasOwn(data.settings ?? {},'profileConfigured')) settings.themeMode = 'NEON';
+  if (!['NEON','SYSTEM','LIGHT','DARK'].includes(settings.themeMode) || !['Violet','Ocean','Forest'].includes(settings.selectedPalette) ||
       !Number.isInteger(settings.goal) || settings.goal < 1 || settings.goal > 500 || !Number.isInteger(settings.retentionDays) ||
-      settings.retentionDays < 1 || settings.retentionDays > 3650 || !validCurrency(settings.currency)) throw new Error('Settings are invalid.');
+      settings.retentionDays < 1 || settings.retentionDays > 3650 || !validCurrency(settings.currency) || !text(settings.operatorName,60) ||
+      !text(settings.displayName,60) || typeof settings.profileConfigured !== 'boolean') throw new Error('Settings are invalid.');
   return { ...data, settings };
 }
 export function visible(data, showDemo) {
@@ -208,10 +282,10 @@ export function visible(data, showDemo) {
     calls: data.calls.filter(c => ids.has(c.customerId)), timeline: data.timeline.filter(e => ids.has(e.customerId)) };
 }
 export function report(data, period, now = Date.now()) {
-  const days = period === '30d' ? 30 : period === '7d' ? 7 : 1;
+  const days = periodDays[period] ?? 1;
   const first = day(addDays(now, -(days - 1)));
   const last = day(now);
-  const start = period === '24h' ? now - 86400000 : new Date(first + 'T00:00:00').getTime();
+  const start = reportStart(period, now);
   const inPeriod = time => period === '24h' ? time >= start && time <= now : day(time) >= first && day(time) <= last;
   const calls = data.calls.filter(c => inPeriod(c.endedAt) && c.endedAt <= now);
   const due = data.followUps.filter(f => inPeriod(f.dueAt) && f.status !== 'DELETED');
@@ -264,7 +338,7 @@ export async function encrypt(data, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const raw = JSON.stringify(data);
-  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.2.0' };
+  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.3.0' };
   const payload = encoder.encode(JSON.stringify({ manifest, data: raw }));
   if (payload.length > 100 * 1024 * 1024) throw new Error('Backup is too large.');
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password, salt), payload);
