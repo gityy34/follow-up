@@ -1,12 +1,13 @@
 {
   "id": "./",
-  "name": "Follow Up",
-  "short_name": "Follow Up",
+  "name": "YoU Follow ups",
+  "short_name": "YoU Follow ups",
+  "description": "Offline customer follow-ups, call outcomes, and daily performance.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f6f5ef",
-  "theme_color": "#f6f5ef",
+  "background_color": "#f7f5fd",
+  "theme_color": "#f7f5fd",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

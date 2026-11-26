@@ -1,0 +1,31 @@
+package com.followup.tracker
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class BackupTest {
+    private val pass = "long test passphrase".toCharArray()
+    private val customer = Customer(displayName = "Example", phoneNumber = "+1 555 1234")
+    private val state = Workspace(customers = listOf(customer), settings = AppSettings(theme = ThemeMode.DARK))
+
+    @Test fun encryptedBackupRoundTripsAndRejectsTampering() {
+        val file = BackupCodec.export(state, pass)
+        assertFalse(file.toString(Charsets.ISO_8859_1).contains(customer.phoneNumber))
+        assertEquals(state, BackupCodec.import(file.inputStream(), pass))
+        assertThrows(Exception::class.java) { BackupCodec.import(file.inputStream(), "wrong passphrase".toCharArray()) }
+        assertThrows(Exception::class.java) { BackupCodec.import(file.copyOf(34).inputStream(), pass) }
+        file[file.lastIndex] = (file.last().toInt() xor 1).toByte()
+        assertThrows(Exception::class.java) { BackupCodec.import(file.inputStream(), pass) }
+    }
+
+    @Test fun rejectsDuplicateIdsAndDanglingRelationships() {
+        val duplicate = state.copy(customers = listOf(customer, customer))
+        assertThrows(IllegalArgumentException::class.java) {
+            BackupCodec.import(BackupCodec.export(duplicate, pass).inputStream(), pass)
+        }
+        val invalid = state.copy(followUps = listOf(FollowUp(customerId = uuid(), purpose = "Invalid", dueAt = now())))
+        assertThrows(IllegalArgumentException::class.java) {
+            BackupCodec.import(BackupCodec.export(invalid, pass).inputStream(), pass)
+        }
+    }
+}

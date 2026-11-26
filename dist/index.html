@@ -2,70 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#f6f5ef">
-<meta name="description" content="Keep track of who to follow up with and when.">
-<title>Follow Up</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f8f5ff">
+<meta name="description" content="Manage customer relationships, call outcomes, and follow-ups on your device.">
+<title>YoU Follow ups</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="style.css">
-<script src="app.js" defer></script>
+<script src="app.js" type="module"></script>
 </head>
 <body>
-<header><div class="bar"><a href="./" class="brand"><span aria-hidden="true">↗</span> Follow Up</a><button id="install" class="outline" aria-haspopup="dialog" hidden>Install options</button></div></header>
-<main>
-<section class="intro">
-<div><h1>Keep in touch.</h1><p>Remember who to follow up with, and when.</p></div>
-<button id="add" class="primary">＋ New follow-up</button>
-</section>
-<section class="stats" aria-label="Follow-up totals">
-<div><span>Due today or earlier</span><strong id="due-count">0</strong></div>
-<div><span>Upcoming</span><strong id="upcoming-count">0</strong></div>
-<div><span>Completed</span><strong id="done-count">0</strong></div>
-</section>
-<section class="queue" aria-labelledby="queue-title">
-<div class="toolbar"><h2 id="queue-title">Your follow-ups</h2><input id="search" type="search" placeholder="Search follow-ups" aria-label="Search follow-ups"></div>
-<div class="filters" role="group" aria-label="Filter follow-ups">
-<button data-filter="active" aria-pressed="true">Active</button>
-<button data-filter="due" aria-pressed="false">Due</button>
-<button data-filter="upcoming" aria-pressed="false">Upcoming</button>
-<button data-filter="done" aria-pressed="false">Completed</button>
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="#journey"><span class="brand-icon" aria-hidden="true">↗</span><span>YoU <strong>Follow ups</strong></span></a>
+    <nav id="side-nav" aria-label="Main navigation"></nav>
+    <div class="sidebar-footer">
+      <button type="button" data-action="install" class="subtle"><span aria-hidden="true">↓</span> Install options</button>
+      <button type="button" data-nav="settings" class="subtle"><span aria-hidden="true">⚙</span> Settings</button>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <div class="top-left"><button id="back" class="icon-button" data-action="back" aria-label="Go back" hidden>‹</button><span class="mobile-mark brand-icon" aria-hidden="true">↗</span><h1 id="screen-title">Customer Journey</h1></div>
+      <div class="top-right"><time id="today"></time><span id="demo-label" class="chip" hidden>Demo</span><button type="button" data-nav="settings" class="icon-button mobile-settings" aria-label="Settings">⚙</button></div>
+    </header>
+    <main id="view"></main>
+    <nav id="bottom-nav" aria-label="Mobile navigation"></nav>
+  </div>
 </div>
-<p id="status" role="status"></p>
-<ul id="items"></ul>
-<p id="empty"></p>
-</section>
-<footer>Follow-ups are saved on this device.</footer>
-</main>
-<dialog id="editor" aria-labelledby="editor-title">
-<form id="follow-up-form">
-<h2 id="editor-title">New follow-up</h2>
-<label>Title<input name="title" required maxlength="120" placeholder="Send the project proposal"></label>
-<label>Contact<input name="contact" maxlength="120" placeholder="Name or email"></label>
-<label>Due date<input name="date" type="date" required></label>
-<label>Notes<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
-<p id="editor-error" role="alert"></p>
-<div class="actions"><button type="button" id="cancel" class="outline">Cancel</button><button class="primary">Save follow-up</button></div>
-</form>
-</dialog>
-<dialog id="install-options" aria-labelledby="install-title">
-<div class="install-content">
-<h2 id="install-title">Install Follow Up</h2>
-<div id="browser-install">
-<p id="install-instructions">Use the install option in your browser’s menu.</p>
-<button id="browser-prompt" type="button" class="primary" hidden>Install website app</button>
-</div>
-<div id="android-downloads" hidden>
-<h3>Android APKs</h3>
-<p>Open the downloaded APK on your Android device to install it.</p>
-<div class="download-links">
-<a href="downloads/follow-up-release.apk" download>Release APK</a>
-<a href="downloads/follow-up-debug.apk" download>Debug APK</a>
-</div>
-</div>
-<form method="dialog" class="install-close"><button class="outline">Close</button></form>
-</div>
-</dialog>
+<div id="toast" role="status" hidden></div>
+<dialog id="modal" aria-labelledby="modal-title"></dialog>
+<noscript>Enable JavaScript to use YoU Follow ups.</noscript>
 </body>
 </html>

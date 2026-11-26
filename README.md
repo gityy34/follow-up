@@ -1,68 +1,65 @@
-# Follow Up
+# YoU Follow ups
 
-Follow Up tracks who to follow up with and when. Add a title, due date, and optional contact and notes. Search, filter, edit, complete, reopen, or delete entries.
+An offline-first customer follow-up and call tracker. The Android app is native Kotlin with Jetpack Compose and Material 3. The website is a responsive, installable PWA with browser-local records.
+
+## Use the app
+
+- **Journey** shows customer stages, the daily call goal, overdue and upcoming follow-ups, recent activity, and the next action.
+- **Customers** holds contact details, notes, tags, status, priority, and an append-only interaction timeline. Archive customers to keep their history.
+- **Agenda** groups follow-ups by date and lets you search or filter by date range, priority, and status. The add flow collects purpose, schedule and note. Deleted follow-ups can be restored.
+- **Call reflection** records one of five outcomes, optional notes, and what to improve. Choose **Follow-up Needed** to go straight to scheduling. The optional timer runs only when you start it.
+- **Performance Coach** calculates today, past week, and past 30 days from your saved records. It shows success and completion rates, issue clusters, a trend and rule-based tips.
+- **Settings** controls appearance, demo data, retention, and encrypted backups. Android settings also include local notifications, app lock, and recent-app privacy. Sign in & Sync is marked Coming Soon.
+
+## Android
+
+Install the **Debug APK** to test or the **Release APK** for normal use on Android 8.0 or newer. A signed Android App Bundle is available for upload to Play Console. The debug and release package IDs have separate data and can coexist.
+
+Enable reminders from Settings. The default is the previous day at the same local time in the follow-up’s saved time zone. You can choose another offset or a custom time. Android may delay best-effort reminders. Exact timing is requested only for time-critical reminders with the device’s exact-alarm access. Use the phone dialer to place a call.
+
+Export and verify an encrypted backup to Documents or another location you control before uninstalling or changing phones. Uninstalling removes the local database. An import verifies the file and previews counts before the user confirms replacement. The Android app writes an encrypted pre-restore copy to app-private storage using the passphrase entered for the import.
+
+### Build
+
+Install a JDK (17 or 21) and the [Android SDK command-line tools](https://developer.android.com/studio#command-tools). Configure `JAVA_HOME` and `ANDROID_HOME`, then run:
+
+```sh
+sdkmanager --licenses
+sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+./gradlew :app:assembleDebug
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+On Windows use `gradlew.bat`. For a release, set `FOLLOW_UP_KEYSTORE`, `FOLLOW_UP_STORE_PASSWORD`, `FOLLOW_UP_KEY_ALIAS` and `FOLLOW_UP_KEY_PASSWORD` in the build environment, then run:
+
+```sh
+./gradlew :app:assembleRelease :app:bundleRelease
+```
+
+APK output is in `android/app/build/outputs/apk/`. The AAB is in `android/app/build/outputs/bundle/release/`. Reuse the original signing key to update existing APK installs.
+
+### Storage and privacy
+
+Room over SQLite stores customers, follow-ups, call logs and timeline entries. Important record changes use transactions. DataStore stores settings. WorkManager reconciles reminders and AlarmManager delivers them. Android requests no Internet, contacts, call-log, microphone, location, SMS, direct-call, or broad storage permission. Backup files use AES-GCM and a passphrase-derived key, with an authenticated versioned manifest and checksum. Dedicate a strong passphrase to backups and keep it privately.
+
+Data Safety draft for Play Console review: the app stores customer and call records locally. The Android app collects and shares no user data over a network and contains no analytics or ads. Portable backup export uses the system document picker and the destination chosen by the user. The dial action opens the device’s phone app. The final Play Console disclosures should match the submitted build.
 
 ## Website
-
-Serve the files in `dist/` over HTTPS or run a local server from the repository root:
 
 ```sh
 python3 -m http.server 8000 --directory dist
 ```
 
-Open http://localhost:8000. To install the website as a progressive web app, choose **Install options** and follow the prompt or your browser’s install menu. On iOS, open the site in Safari and choose **Share → Add to Home Screen**. The web app can reopen offline after the service worker caches it.
+Open http://localhost:8000 for local development. On the deployed HTTPS website, open Settings and choose **Install Options**. On iOS, use Safari’s **Share → Add to Home Screen**. The app shell opens offline once the service worker has cached it. Browser and Android workspaces are independent. Use encrypted export/import to move records manually. The browser saves reminder preferences in backup. Android provides background reminders and device lock.
 
-## Android SDK setup
+The website reads the old browser tracker storage on first launch and converts it to customers and follow-ups. Android includes a local migration attempt for data left by the previous WebView version in the same installation.
 
-Use Android Studio or install the [Android SDK command-line tools](https://developer.android.com/studio#command-tools) and a JDK (17 or 21). Set `JAVA_HOME` and `ANDROID_HOME` to the JDK and Android SDK directories. Install the SDK packages and accept the licenses:
-
-```sh
-sdkmanager --licenses
-sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
-```
-
-Run Gradle from the repository root. On Windows, use `gradlew.bat` in place of `./gradlew`.
-
-## Debug APK
+## Checks
 
 ```sh
-./gradlew :app:assembleDebug
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+node --test tests/web.test.mjs
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest
+./gradlew :app:connectedDebugAndroidTest
 ```
 
-The debug version uses the package ID `com.followup.tracker.debug`, so it can sit alongside the release. You can also copy the APK to an Android 8.0 (API 26) or newer device and open it there. Keep Android System WebView updated.
-
-## Signed release
-
-Use the same signing key for every update of a sideloaded release. Keep your key and password backed up privately, and increment `versionCode` in `android/app/build.gradle` for each release.
-
-To create a signing key for a new distribution, run this once and keep the file outside the repository:
-
-```sh
-keytool -genkeypair -storetype PKCS12 -keystore /path/to/follow-up-release.p12 \
-  -alias follow-up -keyalg RSA -keysize 4096 -validity 10000
-```
-
-Supply the existing key and sign both artifacts. These Bash commands prompt for the password without echoing it. For a PKCS12 key created with the command above, the store and key passwords match.
-
-```bash
-export FOLLOW_UP_KEYSTORE=/path/to/follow-up-release.p12
-export FOLLOW_UP_KEY_ALIAS=follow-up
-read -rs -p "Keystore password: " FOLLOW_UP_STORE_PASSWORD
-printf '\n'
-export FOLLOW_UP_STORE_PASSWORD
-export FOLLOW_UP_KEY_PASSWORD="$FOLLOW_UP_STORE_PASSWORD"
-./gradlew :app:assembleRelease :app:bundleRelease
-unset FOLLOW_UP_STORE_PASSWORD FOLLOW_UP_KEY_PASSWORD
-```
-
-- Installable APK at `android/app/build/outputs/apk/release/app-release.apk`.
-- Android App Bundle at `android/app/build/outputs/bundle/release/app-release.aab`, for a Google Play upload. The bundle is separate from the APK used for direct installs.
-
-Run `apksigner verify --print-certs android/app/build/outputs/apk/release/app-release.apk` to verify the release APK. To install the APK on a connected device, run `adb install -r android/app/build/outputs/apk/release/app-release.apk`. To install from the hosted website, select **Install options**, download the release APK, and open it. Android may ask you to allow installs from the browser or file manager used to open the download.
-
-## Data and packaging
-
-The Android app ships with the tracker and opens offline without a website login. Follow-ups are saved separately in each Android installation and browser profile. Clearing the app or website data removes those entries.
-
-Android builds copy the app shell from `dist/`. When changing the web app shell, increment the cache version in `dist/sw.js`. For a Sites deployment that offers Android downloads, add the signed APKs as `dist/downloads/follow-up-release.apk` and `dist/downloads/follow-up-debug.apk` and add `dist/downloads/android-builds.json` containing `{"androidApks":true}` to the deployment output.
+`connectedDebugAndroidTest` needs an emulator or Android device. See [QA](QA.md) for verified coverage and remaining device checks.
