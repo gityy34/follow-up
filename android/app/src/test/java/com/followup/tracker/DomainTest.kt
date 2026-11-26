@@ -128,4 +128,24 @@ class DomainTest {
         val disabled = data.copy(followUps = listOf(rescheduled.copy(reminderPolicy = Reminder.OFF)))
         assertTrue(remindersFor(disabled, ReminderDay.TODAY, today, tz).isEmpty())
     }
+    @Test fun profileCropAndTodayOverviewUseIndependentUnits() {
+        assertEquals(PhotoCrop(100, 0, 200), profileCrop(400, 200, 1f, 0f, 0f))
+        assertEquals(PhotoCrop(300, 100, 100), profileCrop(400, 200, 2f, 1f, 1f))
+        assertEquals(PhotoCrop(0, 0, 66), profileCrop(200, 400, 3f, -1f, -1f))
+
+        val tz = ZoneId.of("Asia/Karachi")
+        val now = ZonedDateTime.of(2026, 11, 29, 12, 0, 0, 0, tz).toInstant().toEpochMilli()
+        val yesterday = now - 86_400_000L
+        val w = Workspace(calls = listOf(
+            CallLog(customerId = "c", startedAt = yesterday, endedAt = yesterday, outcome = Outcome.RESOLVED,
+                outcomeAt = now - 10L, dealAmount = "1250.50", dealCurrency = "PKR"),
+            CallLog(customerId = "c", startedAt = now - 200L, endedAt = now - 100L, outcome = Outcome.PENDING),
+            CallLog(customerId = "c", startedAt = now - 30L, endedAt = now - 20L, outcome = Outcome.ISSUE)
+        ))
+        val result = todayOverview(w, now, tz)
+        assertEquals(2, result.total)
+        assertEquals(0, result.successful)
+        assertEquals(1, result.pending)
+        assertEquals("1250.50", result.deals.amounts["PKR"])
+    }
 }

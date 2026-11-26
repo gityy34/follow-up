@@ -34,3 +34,9 @@ Android builds use compile and target SDK 36, minimum Android API 26, JDK 21 and
 - The Android debug and release JVM suites cover profile review, old settings, font preferences and encrypted photo metadata. The test APK compiles and lint passes.
 - Browser data and DOM checks exercise both fresh setup and retaining an existing profile, personal name only in the road greeting, photo controls and persistence, font selection, period labels, marker markup, reminders and the Pending deal flow.
 - The browser DOM checks simulate the photo decoder. On-device photo picking, animation playback and visual layout still need device QA.
+
+## Version 1.5.0 road markers and photo editor
+
+- Thirteen Android JVM tests passed in both Debug and Release. Debug lint and the Android instrumentation APK build passed. Coverage includes photo crop bounds, encrypted backup of the crop source, and separate local-day totals for call and payment dates.
+- Eight web data tests and both fresh and existing profile DOM flows passed. The flows cover the road period menu, reminders, today’s chart, exact multi-currency amounts, and profile photo crop, Apply, cancellation and removal from both entry points.
+- The DOM photo tests simulate decoding. The managed browser preview relay could not start. Native animation playback, real photo selection and visual layout still need device QA.

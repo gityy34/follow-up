@@ -141,3 +141,25 @@ test('profile review keeps legacy names and backups preserve font and photo', as
   assert.equal(validPhoto('/9j/<svg>'),false);
   assert.equal(validPhoto('/9j/'+'A'.repeat(90000)),false);
 });
+
+test('photo crop and today’s summary use stable crop bounds and separate units', async () => {
+  const { profileCrop, todayOverview } = await import('../dist/data.js');
+  assert.deepEqual(profileCrop(400,200,1,0,0),{left:100,top:0,side:200});
+  assert.deepEqual(profileCrop(400,200,2,1,1),{left:300,top:100,side:100});
+  assert.deepEqual(profileCrop(200,400,3,-1,-1),{left:0,top:0,side:66});
+  const w = workspace();
+  const now = new Date(2026,10,29,12).getTime();
+  const yesterday = addDays(now,-1);
+  w.calls.push({endedAt:yesterday,outcomeAt:now-1,outcome:'RESOLVED',dealAmount:'1250.50',dealCurrency:'PKR'},
+    {endedAt:now-2,outcome:'PENDING'},{endedAt:now-3,outcome:'ISSUE'});
+  const summary = todayOverview(w,now);
+  assert.equal(summary.total,2);
+  assert.equal(summary.successful,0);
+  assert.equal(summary.pending,1);
+  assert.equal(summary.other,1);
+  assert.deepEqual(summary.deals.amounts,{PKR:'1250.50'});
+  Object.assign(w.settings,{photo:'/9j/AA==',photoSource:'/9j/AQ=='});
+  w.calls = [];
+  const restored = await decrypt(await encrypt(w,'profile editor backup'),'profile editor backup');
+  assert.equal(restored.settings.photoSource,'/9j/AQ==');
+});

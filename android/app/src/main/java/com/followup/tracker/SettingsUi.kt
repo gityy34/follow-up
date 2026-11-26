@@ -20,7 +20,7 @@ import kotlinx.coroutines.*
 
 @Composable
 internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecure: () -> Boolean, demo: Boolean,
-                           demoMode: (Boolean) -> Unit, snack: SnackbarHostState) {
+                           demoMode: (Boolean) -> Unit, snack: SnackbarHostState, editPhoto: () -> Unit) {
     val config = workspace.settings
     val repo = model.repo
     val context = LocalContext.current
@@ -32,7 +32,6 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
     var importUri by remember { mutableStateOf<Uri?>(null) }
     var preview by remember { mutableStateOf<Workspace?>(null) }
     var editProfile by remember { mutableStateOf(false) }
-    var showPhoto by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf("") }
     var appearance by remember { mutableStateOf(false) }
     var confirmAction by remember { mutableStateOf("") }
@@ -109,21 +108,6 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
         if (uri != null) { importUri = uri; password = ""; backupDialog = "Import Backup" }
     }
 
-    val selectPhoto = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) scope.launch {
-            try {
-                val image = withContext(Dispatchers.IO) { readProfilePhoto(context, uri) }
-                repo.settings.set(repo.settings.current().copy(photo = image))
-                snack.showSnackbar("Profile photo saved.")
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { snack.showSnackbar("That image could not be opened. Choose another photo.") }
-        }
-    }
-    if (showPhoto) AlertDialog(onDismissRequest = { showPhoto = false }, title = { Text("Profile photo") },
-        text = { Box(Modifier.fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-            ProfileAvatar(config, Modifier.size(164.dp))
-        } }, confirmButton = { TextButton({ showPhoto = false }) { Text("Close") } })
-
     if (appearance) {
         Panel {
             Section("Appearance")
@@ -148,10 +132,9 @@ internal fun SettingsPanel(workspace: Workspace, model: JourneyModel, deviceSecu
         Text(config.operatorName.ifBlank { "Your name has not been set." })
         Text(config.displayName.ifBlank { "Customer Journey" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton({ editProfile = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Edit name and display") }
-        OutlinedButton({ selectPhoto.launch("image/*") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-            Text(if (config.photo.isBlank()) "Upload profile photo" else "Change profile photo")
+        OutlinedButton(editPhoto, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text(if (config.photo.isBlank()) "Upload profile photo" else "View or edit profile photo")
         }
-        if (config.photo.isNotBlank()) TextButton({ showPhoto = true }) { Text("View profile photo") }
     }
     Panel {
         Section("Appearance")

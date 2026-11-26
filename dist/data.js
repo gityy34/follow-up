@@ -3,10 +3,10 @@ export const outcomes = { RESOLVED: 'Successful / Resolved', FOLLOW_UP: 'Follow-
 export const priorities = { NORMAL: 'Normal', HIGH: 'High priority', URGENT: 'Urgent' };
 export const reminders = { DEFAULT: 'Default', DAY: 'One day before', SAME_DAY: 'Same day at 9 AM', HOUR: 'One hour before', SHORT: '15 minutes before', CUSTOM: 'Custom date and time', OFF: 'Off' };
 export const categories = ['Waiting for customer decision', 'Need more information', 'Price / budget concerns', 'Technical issue', 'Other'];
-export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false, profileReview: 0, photo: '', font: 'DEFAULT' };
+export const defaults = { themeMode: 'NEON', selectedPalette: 'Violet', goal: 5, retentionDays: 90, lastExport: 0, exportLabel: '', onboardingDone: true, currency: 'PKR', operatorName: '', displayName: '', profileConfigured: false, profileReview: 0, photo: '', photoSource: '', font: 'DEFAULT' };
 export const profileReview = 1;
 export const fonts = { DEFAULT: 'App default', DEVICE: 'Device font', MODERN: 'Manrope', EDITORIAL: 'Serif', MONO: 'Monospace' };
-export const validPhoto = photo => typeof photo === 'string' && photo.length >= 4 && photo.length <= 90000 &&
+export const validPhoto = (photo, limit = 90000) => typeof photo === 'string' && photo.length >= 4 && photo.length <= limit &&
   photo.length % 4 === 0 && photo.startsWith('/9j/') && /^[A-Za-z0-9+/=]+$/.test(photo);
 const key = 'you-follow-ups.v1';
 export const uuid = () => crypto.randomUUID();
@@ -276,6 +276,7 @@ export function validate(data) {
   const settings = { ...defaults, ...data.settings };
   if (settings.themeMode === 'SYSTEM' && !Object.hasOwn(data.settings ?? {},'profileConfigured')) settings.themeMode = 'NEON';
   if (!validPhoto(settings.photo)) settings.photo = '';
+  if (!validPhoto(settings.photoSource,350000)) settings.photoSource = '';
   if (!Object.hasOwn(fonts,settings.font)) settings.font = 'DEFAULT';
   if (!Number.isInteger(settings.profileReview) || settings.profileReview < 0) settings.profileReview = 0;
   if (!['NEON','SYSTEM','LIGHT','DARK'].includes(settings.themeMode) || !['Violet','Ocean','Forest'].includes(settings.selectedPalette) ||
@@ -347,7 +348,7 @@ export async function encrypt(data, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const raw = JSON.stringify(data);
-  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.4.0' };
+  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.5.0' };
   const payload = encoder.encode(JSON.stringify({ manifest, data: raw }));
   if (payload.length > 100 * 1024 * 1024) throw new Error('Backup is too large.');
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password, salt), payload);
@@ -364,4 +365,19 @@ export async function decrypt(blob, password) {
   if (![1,2].includes(packet.manifest?.formatVersion) || !packet.manifest.encrypted || !time(packet.manifest.createdAt) ||
       !packet.manifest.appVersion || packet.manifest.checksum !== await checksum(packet.data)) throw new Error('Backup integrity could not be verified.');
   return validate(JSON.parse(packet.data));
+}
+
+export function profileCrop(width,height,zoom,x,y) {
+  if (!(width > 0 && height > 0)) throw new Error('The photo is empty.');
+  const side = Math.max(1,Math.floor(Math.min(width,height)/Math.max(1,Math.min(3,zoom))));
+  const offset = (full,anchor) => Math.floor((full-side)*(Math.max(-1,Math.min(1,anchor))+1)/2);
+  return { left:offset(width,x), top:offset(height,y), side };
+}
+
+export function todayOverview(data,now = Date.now()) {
+  const start = reportStart('today',now);
+  const calls = data.calls.filter(c => c.endedAt >= start && c.endedAt <= now);
+  const successful = calls.filter(c => c.outcome === 'RESOLVED').length;
+  const pending = calls.filter(c => c.outcome === 'PENDING').length;
+  return { total:calls.length, successful, pending, other:calls.length-successful-pending, deals:dealTotals(data.calls,start,now+1) };
 }

@@ -7,7 +7,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DateRange
-import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.foundation.layout.*
@@ -89,6 +90,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
     var backTo by rememberSaveable { mutableStateOf("Journey") }
     var pendingId by rememberSaveable { mutableStateOf("") }
     var period by rememberSaveable { mutableStateOf(ReportPeriod.TODAY) }
+    var photoEditor by rememberSaveable { mutableStateOf(false) }
     var roadIntroPlayed by rememberSaveable { mutableStateOf(false) }
     var reminderDay by rememberSaveable { mutableStateOf(ReminderDay.TODAY) }
     var currentTime by remember { mutableLongStateOf(now()) }
@@ -193,10 +195,15 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
             try {
                 val settings = repo.settings.current()
                 repo.settings.set(settings.copy(operatorName = name, displayName = display, profileConfigured = true,
-                    profileReview = PROFILE_REVIEW, photo = if (newProfile) "" else settings.photo))
+                    profileReview = PROFILE_REVIEW, photo = if (newProfile) "" else settings.photo,
+                    photoSource = if (newProfile) "" else settings.photoSource))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { snackbar.showSnackbar("The profile could not be saved.") }
         }
+    }
+    if (photoEditor) ProfilePhotoEditor(workspace.settings, { photoEditor = false }) { photo, source ->
+        mutate(if (photo.isEmpty()) "Profile photo removed" else "Profile photo updated",
+            { repo.settings.set(repo.settings.current().copy(photo = photo, photoSource = source)) }) { photoEditor = false }
     }
     val needsProfileReview = workspace.settings.profileReview < PROFILE_REVIEW
     if (route == "Journey" && needsProfileReview) {
@@ -211,7 +218,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                 Row(Modifier.statusBarsPadding().fillMaxWidth().heightIn(min = 59.dp).padding(horizontal = 14.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     if (route == "Journey") {
-                        ProfileAvatar(workspace.settings)
+                        IconButton(onClick = { photoEditor = true }) { ProfileAvatar(workspace.settings) }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(workspace.settings.displayName.ifBlank { "Customer Journey" }, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -226,7 +233,12 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                         }
                     } else {
                         IconButton(onClick = ::back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Go back") }
-                        Text(if (route == "Performance") "Performance Coach" else route, modifier = Modifier.weight(1f),
+                        Text(when (route) {
+                            "Customers" -> "Contacts"
+                            "Agenda" -> "Schedule"
+                            "Performance" -> "Insights"
+                            else -> route
+                        }, modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
                     if (activeDemo) Text("Demo", Modifier.padding(end = 3.dp), color = MaterialTheme.colorScheme.primary)
@@ -248,12 +260,13 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
         },
         bottomBar = {
             if (route in top) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                listOf("Journey", "Customers", "Agenda", "Performance").forEach { label ->
-                    NavigationBarItem(selected = route == label, onClick = { route = label }, icon = {
-                        when (label) {
-                            "Journey" -> Icon(Icons.Outlined.Home, null)
-                            "Customers" -> Icon(Icons.Outlined.Person, null)
-                            "Agenda" -> Icon(Icons.Outlined.DateRange, null)
+                listOf("Journey" to "Overview", "Customers" to "Contacts", "Agenda" to "Schedule",
+                    "Performance" to "Insights").forEach { (screen, label) ->
+                    NavigationBarItem(selected = route == screen, onClick = { route = screen }, icon = {
+                        when (screen) {
+                            "Journey" -> OverviewGlyph()
+                            "Customers" -> Icon(Icons.Outlined.AccountCircle, null)
+                            "Agenda" -> Icon(Icons.AutoMirrored.Outlined.List, null)
                             else -> TrendGlyph()
                         }
                     }, label = { Text(label, maxLines = 1) })
@@ -331,7 +344,7 @@ internal fun JourneyScreen(model: JourneyModel, workspace: Workspace, incoming: 
                         }
                     }
                     "Performance" -> Performance(data, period, { period = it })
-                    "Settings" -> SettingsPanel(workspace, model, secureDevice, activeDemo, { activeDemo = it }, snackbar)
+                    "Settings" -> SettingsPanel(workspace, model, secureDevice, activeDemo, { activeDemo = it }, snackbar, { photoEditor = true })
                 }
                 }
             }

@@ -2,7 +2,7 @@ import {
   stages, outcomes, priorities, reminders, categories, uuid, timezone, workspace, customer, followUp,
   event, day, dateText, dateField, addDays, orderFollow, dayGroup, load, save, visible, report, encrypt, decrypt, validPhone,
   periods, currencyCodes, entryOutcomes, pendingOutcomes, stageForOutcome, withOutcome, outcomeLabel, completeLinkedFollowUp, resolvePending,
-  greeting, journeySnapshot, remindersFor, reminderDays, profileReview, fonts, validPhoto
+  greeting, journeySnapshot, remindersFor, reminderDays, profileReview, fonts, validPhoto, profileCrop, todayOverview
 } from './data.js';
 
 const view = document.querySelector('#view');
@@ -11,11 +11,11 @@ const toast = document.querySelector('#toast');
 const query = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const titles = {
-  journey: 'Customer Journey', agenda: 'Follow-up Agenda', customers: 'Customers', detail: 'Customer Detail',
+  journey: 'Customer Journey', agenda: 'Schedule', customers: 'Contacts', detail: 'Customer Detail',
   edit: 'Customer', follow: 'Follow-up Detail', wizard: 'Add Follow-up', session: 'Start Call Session',
-  call: 'Post-Call Reflection', pending: 'Pending Calls', 'pending-result': 'Update Pending Call', performance: 'Performance Coach', settings: 'Settings', reminders: 'Reminders'
+  call: 'Post-Call Reflection', pending: 'Pending Calls', 'pending-result': 'Update Pending Call', performance: 'Insights', settings: 'Settings', reminders: 'Reminders'
 };
-const nav = [['journey','Journey','home'],['customers','Customers','person'],['agenda','Agenda','calendar_month'],['performance','Performance','bar_chart']];
+const nav = [['journey','Overview','grid_view'],['customers','Contacts','badge'],['agenda','Schedule','event_available'],['performance','Insights','monitoring']];
 const purposes = ['Discuss proposal','Confirm interest','Share product info','Address concern / issue','Agree next step','Other'];
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 let initializationError = false;
@@ -38,6 +38,7 @@ let period = 'today';
 let reminderDay = 'today';
 let initialProfile = false;
 let profileChoice = '';
+let photoDraft;
 let roadIntroPlayed = false;
 let pendingDraft;
 let limit = 40;
@@ -62,7 +63,7 @@ const area = (label, name, value, max) => `<label>${label}<textarea name="${name
 const prefs = value => Object.fromEntries(value.map(key => [key,key]));
 const profileAvatar = (settings, large = false) => {
   const photo = validPhoto(settings.photo) ? `<img alt="Profile photo" src="data:image/jpeg;base64,${escape(settings.photo)}">` :
-    `<span aria-hidden="true">${escape(initials(settings.operatorName || settings.displayName) || 'UY')}</span>`;
+    '<img alt="Default profile icon" src="icon-192.png">';
   return `<span class="profile-avatar${large ? ' profile-avatar-large' : ''}">${photo}</span>`;
 };
 const avatar = name => `<span class="avatar" aria-hidden="true">${escape(initials(name))}</span>`;
@@ -134,7 +135,7 @@ function header(w, time) {
   if (page === 'journey') {
     const date = new Intl.DateTimeFormat('en-GB',{ weekday:'short', month:'short', day:'numeric' }).format(time);
     const count = remindersFor(w,'today',time).length;
-    return `<div class="top-left">${profileAvatar(data.settings)}<div class="grow title-group">
+    return `<div class="top-left"><button type="button" class="avatar-button" data-action="edit-profile-photo" aria-label="View or edit profile photo">${profileAvatar(data.settings)}</button><div class="grow title-group">
       <h1>${escape(title)}</h1><time datetime="${day(time)}">${date}</time></div></div>
       <div class="top-right">${tag}<button type="button" class="icon-button reminder-button" data-action="reminders" aria-label="Reminders, ${count} today">
         ${icon('notifications')}${count ? `<span class="reminder-badge" aria-hidden="true">${count}</span>` : ''}</button>${menu}</div>`;
@@ -165,34 +166,40 @@ function render() {
 
 function journey(w, time) {
   const snapshot = journeySnapshot(w,period,time);
-  const calls = w.calls.filter(c => day(c.endedAt) === day(time));
+  const overview = todayOverview(w,time);
   const active = new Set(w.customers.filter(c => !c.archived).map(c => c.id));
   const due = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN' && day(f.dueAt) === day(time)).length;
-  const review = calls.filter(c => c.outcome === 'ISSUE').length;
+  const review = w.calls.filter(c => day(c.endedAt) === day(time) && c.endedAt <= time && c.outcome === 'ISSUE').length;
   const pending = w.calls.filter(c => c.outcome === 'PENDING').length;
-  const checkpoint = (text,count,glyph,place) => `<div class="checkpoint checkpoint-${place}">
-    <div class="checkpoint-label">${icon(glyph)}<div><span>${text}</span><b>${count}</b></div></div><i class="checkpoint-dot" aria-hidden="true"></i></div>`;
-  const amounts = Object.entries(snapshot.deals.amounts);
+  const checkpoint = (text,count,glyph,place,color,x,y,left,width) => {
+    const anchor = `--stop-x:${x}%;--stop-y:${y}%;--card-x:${left}%;--card-width:${width}%;--tip:${(x-left)/width*100}%`;
+    return `<div class="checkpoint checkpoint-${place}" style="${anchor}">
+      <div class="checkpoint-label">${icon(glyph)}<div><span>${text}</span><b>${count}</b></div></div></div>
+      <img class="road-puck road-puck-${place}" style="--stop-x:${x}%;--stop-y:${y}%" alt="" src="road-puck-${color}.webp">`;
+  };
+  const amounts = Object.entries(overview.deals.amounts);
   const hello = [greeting(time),w.settings.operatorName].filter(Boolean).join(', ');
   const animate = !roadIntroPlayed && w.settings.profileReview >= profileReview;
   if (animate) roadIntroPlayed = true;
   const next = w.followUps.filter(f => active.has(f.customerId) && f.status === 'OPEN').sort(orderFollow)[0];
-  const tiles = [['Calls',calls.length,'call','today-calls'],['Follow-ups',due,'calendar_month','today-agenda'],['Needs review',review,'flag','today-calls']];
-  const progress = Math.min(100,100 * calls.length / w.settings.goal);
+  const tiles = [['Call log',overview.total,'call','today-calls'],['Follow-ups',due,'event_available','today-agenda'],['Review',review,'flag','today-calls']];
+  const progress = Math.min(100,100 * overview.total / w.settings.goal);
   return `<div class="neon-dashboard"><section class="hero" aria-label="Customer journey, ${periods[period]}">
     <div class="hero-copy"><h2>${escape(hello)}!</h2><p class="hero-period">${periods[period]}</p></div>
     <div class="hero-map${animate ? ' hero-animate' : ''}">
-      ${checkpoint('New',snapshot.newCustomers,'person_add','new')}${checkpoint('Contacted',snapshot.contacted,'call','contacted')}
-      ${checkpoint('Follow-up',snapshot.followUps,'calendar_month','follow')}${checkpoint('Successful',snapshot.deals.successful,'check_circle','resolved')}
-      ${animate ? ['new','contacted','follow','resolved'].map(place => `<span aria-hidden="true" class="road-token road-token-${place}"></span>`).join('') : ''}
+      ${checkpoint('New',snapshot.newCustomers,'person_add','new','violet',15.8,25.5,3.5,37)}
+      ${checkpoint('Contacted',snapshot.contacted,'call','contacted','blue',81.9,42.6,55,42)}
+      ${checkpoint('Follow-up',snapshot.followUps,'calendar_month','follow','violet',15.1,61.5,3.2,40)}
+      ${checkpoint('Successful',snapshot.deals.successful,'check_circle','resolved','cyan',73.4,80.6,55,42)}
       ${iconButton('more_vert','Select journey period','journey-period','road-more')}
     </div></section>
     <div class="stack neon-summary">
+      <section class="today-payment"><h2>Deal amount today</h2><div class="payment-values">${amounts.length ? amounts.map(([currency,amount]) =>
+        `<strong>${escape(currency)} ${escape(amount)}</strong>`).join('') : '<strong>PKR 0</strong>'}</div></section>
+      ${todayCallChart(overview)}
       <section class="mission-strip">
-        <div class="strip-deal"><h2>Deal amount</h2><div class="payment-values">${amounts.length ? amounts.map(([currency,amount]) =>
-          `<strong>${escape(currency)} ${escape(amount)}</strong>`).join('') : `<strong>${escape(w.settings.currency)} 0</strong>`}</div></div>
         <div class="strip-mission"><span class="mission-ring" style="--progress:${progress}%" aria-hidden="true"></span>
-          <div><h2>Today’s mission</h2><strong>${calls.length} / ${w.settings.goal} calls</strong></div>
+          <div><h2>Today’s mission</h2><strong>${overview.total} / ${w.settings.goal} calls</strong></div>
           ${dots('Mission options', `<button type="button" data-action="session">Start call session</button><button type="button" data-action="pending-list">Pending calls (${pending})</button><button type="button" data-nav="settings">Change call goal</button>`)}
         </div>
       </section>
@@ -205,6 +212,21 @@ function journey(w, time) {
           row(e.eventType,(owner(e.customerId)?.displayName ?? '') + ' · ' + dateText(e.eventTime),'open-customer',e.customerId)),
           'Saved activity will appear here.')}</details>
     </div></div>`;
+}
+
+function todayCallChart(overview) {
+  const segments = [['Successful',overview.successful,'#80f5ec'],['Pending',overview.pending,'#ecaaff'],['Other outcomes',overview.other,'#a1c8ff']];
+  let start = 0;
+  const stops = overview.total ? segments.filter(([,count]) => count > 0).map(([,count,color]) => {
+    const from = start;
+    start += count / overview.total * 100;
+    return `${color} ${from}% ${start}%`;
+  }).join(',') : '';
+  return `<section class="today-calls"><h2>Calls today</h2><div class="today-chart-row">
+    <div class="today-donut" style="--slices:${stops ? 'conic-gradient('+stops+')' : 'var(--line)'}">
+      <div><strong>${overview.total}</strong><small>Calls</small></div>
+    </div><ul class="today-legend">${segments.map(([label,count,color]) => `<li><i aria-hidden="true" style="--segment:${color}"></i>
+      <span>${label}</span><b>${count}</b></li>`).join('')}</ul></div></section>`;
 }
 
 function reminderScreen(w, time) {
@@ -422,9 +444,7 @@ function settings() {
     <p>${escape(s.operatorName || 'Your name has not been set.')}</p>
     <p class="note">${escape(s.displayName || 'Customer Journey')}</p>
     <div class="actions">${button('Edit name and display','edit-profile')}
-      ${button(s.photo ? 'Change profile photo' : 'Upload profile photo','choose-profile-photo')}
-      ${s.photo ? button('View profile photo','view-profile-photo') : ''}</div>
-    <input id="profile-photo-file" type="file" accept="image/*" hidden></section><section class="card"><h2>Appearance</h2><div class="fields">
+      ${button(s.photo ? 'View or edit profile photo' : 'Upload profile photo','edit-profile-photo')}</div></section><section class="card"><h2>Appearance</h2><div class="fields">
     ${select('Theme','themeMode',{NEON:'Neon',SYSTEM:'System',LIGHT:'Light',DARK:'Dark'},s.themeMode,'data-setting')}
     ${select('Palette','selectedPalette',prefs(['Violet','Ocean','Forest']),s.selectedPalette,'data-setting')}
     ${select('Font','font',fonts,s.font,'data-setting')}
@@ -469,7 +489,7 @@ function openProfile(initial, choice = '') {
 function saveProfile(name, display, message, replacePhoto = false) {
   write(next => {
     Object.assign(next.settings,{operatorName:name,displayName:display,profileConfigured:true,profileReview});
-    if (replacePhoto) next.settings.photo='';
+    if (replacePhoto) { next.settings.photo=''; next.settings.photoSource=''; }
   },message);
   initialProfile = false;
   profileChoice = '';
@@ -477,21 +497,85 @@ function saveProfile(name, display, message, replacePhoto = false) {
   render();
 }
 
-async function prepareProfilePhoto(file) {
+function photoSurface(width,height) {
+  const surface = document.createElement('canvas');
+  surface.width = width;
+  surface.height = height;
+  return surface;
+}
+function jpegOf(surface, limit = 90000) {
+  const result = surface.toDataURL('image/jpeg',.87).split(',')[1];
+  if (!validPhoto(result,limit)) throw new Error('This image could not be prepared.');
+  return result;
+}
+function photoBlob(source) {
+  const bytes = Uint8Array.from(atob(source), value => value.charCodeAt(0));
+  return new Blob([bytes],{type:'image/jpeg'});
+}
+function openPhotoEditor() {
+  photoDraft = { source:data.settings.photoSource || data.settings.photo, image:null, removed:false, zoom:1, x:0, y:0 };
+  renderPhotoEditor();
+}
+function renderPhotoEditor() {
+  const draft = photoDraft;
+  if (!draft) return;
+  const sliders = draft.image && !draft.removed ? `<label>Zoom<input type="range" min="1" max="3" step=".01" value="${draft.zoom}" data-crop="zoom"></label>
+    <label>Horizontal position<input type="range" min="-1" max="1" step=".01" value="${draft.x}" data-crop="x"></label>
+    <label>Vertical position<input type="range" min="-1" max="1" step=".01" value="${draft.y}" data-crop="y"></label>` : '';
+  openModal('Profile photo',`<div class="photo-editor">
+    ${draft.image && !draft.removed ? '<canvas id="profile-crop-preview" width="192" height="192" aria-label="Cropped photo preview"></canvas>' :
+      profileAvatar(draft.removed ? {photo:''} : data.settings,true)}
+    ${sliders}
+    ${draft.removed ? '<p class="note">Apply to remove the photo.</p>' : ''}
+    <input id="profile-photo-file" type="file" accept="image/*" hidden>
+    <div class="actions">${button(draft.source ? 'Change' : 'Upload','choose-profile-photo')}
+      ${draft.source && !draft.removed && !draft.image ? button('Crop','crop-profile-photo') : ''}
+      ${draft.source && !draft.removed ? button('Remove','remove-profile-photo','','outline danger') : ''}</div>
+    <div class="actions">${button('Close','close-modal')}
+      ${draft.removed || draft.image ? button('Apply','apply-profile-photo','','button') : ''}</div></div>`);
+  drawCrop();
+}
+function drawCrop() {
+  const surface = query('#profile-crop-preview');
+  if (!surface || !photoDraft?.image) return;
+  const {image,zoom,x,y} = photoDraft;
+  const {left,top,side} = profileCrop(image.width,image.height,zoom,x,y);
+  surface.getContext('2d').drawImage(image,left,top,side,side,0,0,192,192);
+}
+async function editPhotoSource(source) {
+  const draft = photoDraft;
+  if (!draft || !source) return;
+  const image = await createImageBitmap(photoBlob(source));
+  if (photoDraft !== draft) { image.close(); return; }
+  draft.image?.close();
+  Object.assign(draft,{source,image,removed:false,zoom:1,x:0,y:0});
+  renderPhotoEditor();
+}
+async function loadProfileFile(file) {
   if (!file || file.size > 30000000) throw new Error('Choose an image smaller than 30 MB.');
+  const draft = photoDraft;
   const image = await createImageBitmap(file,{imageOrientation:'from-image'});
   try {
-    const surface = document.createElement('canvas');
-    surface.width = surface.height = 192;
+    if (photoDraft !== draft) return;
+    const scale = Math.min(1,512/Math.max(image.width,image.height));
+    const surface = photoSurface(Math.max(1,Math.round(image.width*scale)),Math.max(1,Math.round(image.height*scale)));
     const context = surface.getContext('2d');
-    const size = Math.min(image.width,image.height);
     context.fillStyle = '#202440';
-    context.fillRect(0,0,192,192);
-    context.drawImage(image,(image.width-size)/2,(image.height-size)/2,size,size,0,0,192,192);
-    const photo = surface.toDataURL('image/jpeg',.87).split(',')[1];
-    if (!validPhoto(photo)) throw new Error('This image could not be prepared.');
-    return photo;
+    context.fillRect(0,0,surface.width,surface.height);
+    context.drawImage(image,0,0,surface.width,surface.height);
+    await editPhotoSource(jpegOf(surface,350000));
   } finally { image.close(); }
+}
+function applyPhoto() {
+  const draft = photoDraft;
+  if (!draft || (!draft.removed && !draft.image)) return;
+  const photo = draft.removed ? '' : jpegOf(query('#profile-crop-preview'));
+  write(next => {
+    next.settings.photo = photo;
+    next.settings.photoSource = draft.removed ? '' : draft.source;
+  }, draft.removed ? 'Profile photo removed.' : 'Profile photo updated.');
+  modal.close();
+  render();
 }
 
 function confirmAction(title, detail, action) {
@@ -573,8 +657,11 @@ const actions = {
   'setup-existing': () => openProfile(true,'existing'),
   'setup-back': () => openProfile(true),
   'skip-profile': () => saveProfile(data.settings.operatorName,data.settings.displayName,''),
+  'edit-profile-photo': openPhotoEditor,
   'choose-profile-photo': () => query('#profile-photo-file')?.click(),
-  'view-profile-photo': () => openModal('Profile photo',profileAvatar(data.settings,true)+button('Close','close-modal')),
+  'crop-profile-photo': () => editPhotoSource(photoDraft?.source),
+  'remove-profile-photo': () => { if (photoDraft) { photoDraft.removed=true; renderPhotoEditor(); } },
+  'apply-profile-photo': applyPhoto,
   'journey-period': () => openModal('Journey period', periodPicker()),
   reminders: () => { reminderDay = 'today'; go('reminders'); },
   'reminder-period': () => openModal('Reminder day', `<div class="periods" role="group" aria-label="Reminder day">
@@ -776,6 +863,7 @@ function onFilter(el, update) {
 }
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.dataset.crop && photoDraft) { photoDraft[el.dataset.crop] = Number(el.value); drawCrop(); return; }
   if (el.dataset.filter !== undefined && el.name === 'q') {
     onFilter(el,()=>{ filters.q=el.value; limit=40; });
   }
@@ -794,11 +882,7 @@ document.addEventListener('change', async e => {
   try {
     if (el.id === 'profile-photo-file') {
       const file = el.files?.[0];
-      if (file) {
-        const photo = await prepareProfilePhoto(file);
-        write(next => { next.settings.photo = photo; },'Profile photo saved.');
-        render();
-      }
+      if (file) await loadProfileFile(file);
       return;
     }
     if (el.dataset.filter !== undefined && el.name !== 'q') onFilter(el, () => { if (el.value) filters[el.name]=el.value; limit=40; });
@@ -843,7 +927,7 @@ document.addEventListener('submit', async e => {
 modal.addEventListener('cancel', e => {
   if (initialProfile) { e.preventDefault(); actions['skip-profile'](); }
 });
-modal.addEventListener('close', () => { initialProfile = false; pendingRestore = null; pendingSafety = null; resetPassword(); });
+modal.addEventListener('close', () => { initialProfile = false; pendingRestore = null; pendingSafety = null; photoDraft?.image?.close(); photoDraft = null; resetPassword(); });
 window.addEventListener('popstate', e => {
   const next = e.state?.page;
   if (next && Object.hasOwn(titles,next)) { page=next; selected=e.state.id || ''; limit=40; render(); }

@@ -2,6 +2,7 @@ package com.followup.tracker
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -26,12 +27,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -59,10 +63,23 @@ internal fun DotMenu(description: String, modifier: Modifier = Modifier, color: 
 internal fun TrendGlyph() {
     val color = LocalContentColor.current
     Canvas(Modifier.size(24.dp)) {
-        for (index in 0..3) {
-            val x = size.width * (.19f + index * .205f)
-            drawLine(color, Offset(x, size.height * (.68f - index * .155f)), Offset(x, size.height * .88f),
-                strokeWidth = 1.9.dp.toPx(), cap = StrokeCap.Round)
+        val points = listOf(Offset(.19f, .69f), Offset(.40f, .49f), Offset(.59f, .57f), Offset(.82f, .25f))
+            .map { Offset(it.x * size.width, it.y * size.height) }
+        drawLine(color, Offset(size.width * .14f, size.height * .82f),
+            Offset(size.width * .87f, size.height * .82f), strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round)
+        points.zipWithNext().forEach { (start, end) -> drawLine(color, start, end, 1.7.dp.toPx(), cap = StrokeCap.Round) }
+        points.forEach { drawCircle(color, 1.5.dp.toPx(), it) }
+    }
+}
+
+@Composable
+internal fun OverviewGlyph() {
+    val color = LocalContentColor.current
+    Canvas(Modifier.size(24.dp)) {
+        val cell = size.width * .29f
+        for (x in listOf(.16f,.55f)) for (y in listOf(.16f,.55f)) {
+            drawRoundRect(color, Offset(size.width * x,size.height * y), Size(cell,cell),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()), style = Stroke(1.65.dp.toPx()))
         }
     }
 }
@@ -74,7 +91,8 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
                          playIntro: Boolean, onIntroFinished: () -> Unit) {
     val snapshot = remember(data, period, time) { journeySnapshot(data, period, time, zone()) }
     val today = localDay(time)
-    val calls = data.calls.count { localDay(it.endedAt) == today }
+    val overview = remember(data, time) { todayOverview(data, time, zone()) }
+    val calls = overview.total
     val issues = data.calls.count { localDay(it.endedAt) == today && it.outcome == Outcome.ISSUE }
     val activeCustomers = data.customers.filterNot { it.archived }.mapTo(hashSetOf()) { it.id }
     val followUps = data.followUps.count { it.customerId in activeCustomers && it.status == FollowStatus.OPEN && localDay(it.dueAt) == today }
@@ -82,21 +100,23 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
     val hello = listOf(greeting(time, zone()), data.settings.operatorName).filter { it.isNotBlank() }.joinToString(", ")
     NeonRoad(snapshot, hello, period, setPeriod, playIntro, onIntroFinished)
 
+    Column(Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Deal amount today", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val amounts = overview.deals.amounts.ifEmpty { mapOf("PKR" to "0") }
+        amounts.forEach { (currency, amount) ->
+            Text("$currency $amount", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary)
+        }
+    }
+    TodayCallChart(overview)
+
     val progress = (calls.toFloat() / data.settings.goal).coerceAtMost(1f)
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text("Deal amount", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val amounts = snapshot.deals.amounts.ifEmpty { mapOf(data.settings.currency to "0") }
-            amounts.forEach { (currency, amount) ->
-                Text("$currency $amount", style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-            }
-        }
+        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         CircularProgressIndicator(progress = { progress }, modifier = Modifier.size(30.dp), strokeWidth = 3.dp,
             trackColor = MaterialTheme.colorScheme.surfaceVariant)
-        Column(Modifier.weight(1.15f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text("Today’s mission", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("$calls / ${data.settings.goal} calls", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         }
@@ -109,9 +129,9 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        MissionTile("Calls", calls, Icons.Outlined.Phone, Modifier.weight(1f), showCalls)
+        MissionTile("Call log", calls, Icons.Outlined.Phone, Modifier.weight(1f), showCalls)
         MissionTile("Follow-ups", followUps, Icons.Outlined.DateRange, Modifier.weight(1f), showAgenda)
-        MissionTile("Needs review", issues, Icons.Outlined.Info, Modifier.weight(1f), showCalls)
+        MissionTile("Review", issues, Icons.Outlined.Info, Modifier.weight(1f), showCalls)
     }
     var showActivity by rememberSaveable { mutableStateOf(false) }
     Panel {
@@ -139,6 +159,47 @@ internal fun NeonJourney(data: Workspace, time: Long, period: ReportPeriod, setP
 }
 
 @Composable
+private fun TodayCallChart(data: TodayOverview) {
+    val segments = listOf(Triple("Successful", data.successful, cyan), Triple("Pending", data.pending, violet),
+        Triple("Other outcomes", data.other, blue))
+    val shade = MaterialTheme.colorScheme.surfaceVariant
+    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Calls today", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            Box(Modifier.size(98.dp), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.matchParentSize()) {
+                    val thickness = 12.dp.toPx()
+                    val inset = thickness / 2
+                    val area = Size(size.width - thickness, size.height - thickness)
+                    drawArc(shade, -90f, 360f, false, Offset(inset, inset), area, style = Stroke(thickness))
+                    if (data.total > 0) {
+                        var start = -90f
+                        segments.forEach { (_, count, color) ->
+                            val sweep = 360f * count / data.total
+                            if (count > 0) drawArc(color, start, sweep, false, Offset(inset, inset), area, style = Stroke(thickness))
+                            start += sweep
+                        }
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(data.total.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Calls", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                segments.forEach { (label, count, color) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+                        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        Text(count.toString(), style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun MissionTile(label: String, value: Int, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
     OutlinedCard(onClick = onClick, modifier = modifier,
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -154,21 +215,25 @@ private fun MissionTile(label: String, value: Int, icon: ImageVector, modifier: 
     }
 }
 
-private data class RoadStop(val x: Float, val y: Float, val cardX: Float, val cardY: Float, val width: Float)
+private data class RoadStop(val x: Float, val y: Float, val cardX: Float, val width: Float, val puck: Int)
 private val roadStops = listOf(
-    RoadStop(.28f, .25f, .09f, .023f, .37f),
-    RoadStop(.76f, .43f, .55f, .203f, .42f),
-    RoadStop(.27f, .63f, .07f, .406f, .40f),
-    RoadStop(.76f, .83f, .55f, .606f, .42f)
+    RoadStop(.158f, .255f, .035f, .37f, R.drawable.road_puck_violet),
+    RoadStop(.819f, .426f, .55f, .42f, R.drawable.road_puck_blue),
+    RoadStop(.151f, .615f, .032f, .40f, R.drawable.road_puck_violet),
+    RoadStop(.734f, .806f, .55f, .42f, R.drawable.road_puck_cyan)
 )
 
 private fun routeTo(stop: Int): PathMeasure {
     val path = Path().apply {
-        moveTo(.96f, .95f)
+        moveTo(.962f, .955f)
         for (index in 3 downTo stop) {
             val target = roadStops[index]
-            val x = when (index) { 3 -> .88f; 2 -> .12f; 1 -> .91f; else -> .15f }
-            cubicTo(x, target.y + .13f, x, target.y, target.x, target.y)
+            when (index) {
+                3 -> cubicTo(.925f, .910f, .826f, .849f, target.x, target.y)
+                2 -> cubicTo(.57f, .744f, .14f, .748f, target.x, target.y)
+                1 -> cubicTo(.14f, .518f, .88f, .546f, target.x, target.y)
+                else -> cubicTo(.78f, .339f, .12f, .355f, target.x, target.y)
+            }
         }
     }
     return PathMeasure().apply { setPath(path, false) }
@@ -183,53 +248,60 @@ private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeri
     val routes = remember { roadStops.indices.map(::routeTo) }
     LaunchedEffect(playIntro) {
         if (playIntro) {
-            if (motionEnabled) {
-                animation.animateTo(1f, tween(2000, easing = LinearEasing))
-            }
+            if (motionEnabled) animation.animateTo(1f, tween(3900, easing = LinearEasing))
             onIntroFinished()
         } else animation.snapTo(1f)
     }
-    Column(Modifier.fillMaxWidth().clip(shape)
-        .background(Brush.horizontalGradient(listOf(Color(0xff361661), Color(0xff141942))))
+    Box(Modifier.fillMaxWidth().clip(shape).background(Color(0xff110a35))
         .border(1.dp, Color(0xff7563ac).copy(alpha = .58f), shape)) {
-        Column(Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, top = 11.dp, bottom = 7.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text("$greeting!", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(period.title, color = Color(0xffdfd5ff), style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Color(0xff171b43).copy(alpha = .72f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp))
-        }
-        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1.14f)) {
-            val width = maxWidth
-            val height = maxHeight
-            Image(painterResource(R.drawable.neon_road), null, Modifier.matchParentSize(), alignment = Alignment.BottomCenter,
-                contentScale = ContentScale.Crop)
-            val names = listOf("New", "Contacted", "Follow-up", "Successful")
-            val counts = listOf(data.new, data.contacted, data.followUps, data.deals.successful)
-            val icons = listOf(Icons.Outlined.Person, Icons.Outlined.Phone, Icons.Outlined.DateRange, Icons.Outlined.CheckCircle)
-            val colors = listOf(violet, blue, violet, cyan)
-            val intro = animation.value
-            roadStops.forEachIndexed { index, stop ->
-                val start = (3 - index) * .072f
-                val end = .82f - index * .12f
-                val travel = ((intro - start) / (end - start)).coerceIn(0f, 1f)
-                val show = ((intro - end) / .14f).coerceIn(0f, 1f)
-                if (intro >= start && travel < 1f) {
-                    val route = routes[index]
-                    val point = route.getPosition(route.length * travel)
-                    Box(Modifier.offset(width * point.x - 6.dp, height * point.y - 6.dp)
-                        .size(12.dp).clip(RoundedCornerShape(4.dp)).background(colors[index]))
-                }
-                if (show > 0f) JourneyPin(names[index], counts[index], icons[index], colors[index],
-                    Modifier.offset(width * stop.cardX, height * stop.cardY).width(width * stop.width)
-                        .graphicsLayer { alpha = show; scaleX = .82f + .18f * show; scaleY = .82f + .18f * show })
+        Image(painterResource(R.drawable.neon_road), null, Modifier.matchParentSize(), alignment = Alignment.BottomCenter,
+            contentScale = ContentScale.FillWidth)
+        Column {
+            Column(Modifier.fillMaxWidth().padding(start = 15.dp, end = 15.dp, top = 11.dp, bottom = 7.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("$greeting!", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(period.title, color = Color(0xffdfd5ff), style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(vertical = 3.dp))
             }
-            DotMenu("Select journey period", Modifier.offset(width * .37f, height * .585f)
-                .clip(CircleShape).background(Color(0xff201946).copy(alpha = .86f)), Color(0xfff0e6ff)) { close ->
-                ReportPeriod.entries.forEach { option ->
-                    DropdownMenuItem(text = { Text(if (option == period) "✓  ${option.title}" else option.title) },
-                        onClick = { close(); choose(option) })
+            BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1.14f)) {
+                val width = maxWidth
+                val height = maxHeight
+                val names = listOf("New", "Contacted", "Follow-up", "Successful")
+                val counts = listOf(data.new, data.contacted, data.followUps, data.deals.successful)
+                val icons = listOf(Icons.Outlined.Person, Icons.Outlined.Phone, Icons.Outlined.DateRange, Icons.Outlined.CheckCircle)
+                val colors = listOf(violet, blue, violet, cyan)
+                val elapsed = animation.value * 3900
+                roadStops.forEachIndexed { index, stop ->
+                    val delay = (3 - index) * 100f
+                    val route = routes[index]
+                    val duration = 2700f * route.length / routes[0].length
+                    val travel = FastOutSlowInEasing.transform(((elapsed - delay) / duration).coerceIn(0f, 1f))
+                    if (elapsed >= delay) {
+                        val point = if (travel >= 1f) Offset(stop.x, stop.y) else route.getPosition(route.length * travel)
+                        Image(painterResource(stop.puck), null, Modifier.offset(width * point.x - 14.dp, height * point.y - 7.dp)
+                            .size(28.dp, 14.dp), contentScale = ContentScale.FillBounds)
+                    }
+                    val show = FastOutSlowInEasing.transform(((elapsed - 3000f - (3 - index) * 60f) / 700f).coerceIn(0f, 1f))
+                    if (show > 0f) {
+                        val tip = (stop.x - stop.cardX) / stop.width
+                        JourneyPin(names[index], counts[index], icons[index], colors[index], tip,
+                            Modifier.offset(width * stop.cardX, height * stop.y).width(width * stop.width)
+                                .graphicsLayer {
+                                    translationY = -size.height - 5.dp.toPx()
+                                    transformOrigin = TransformOrigin(tip, 1f)
+                                    alpha = show
+                                    scaleX = .88f + .12f * show
+                                    scaleY = .88f + .12f * show
+                                })
+                    }
+                }
+                DotMenu("Select journey period", Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 8.dp)
+                    .clip(CircleShape).background(Color(0xff201946).copy(alpha = .84f)), Color(0xfff0e6ff)) { close ->
+                    ReportPeriod.entries.forEach { option ->
+                        DropdownMenuItem(text = { Text(if (option == period) "✓  ${option.title}" else option.title) },
+                            onClick = { close(); choose(option) })
+                    }
                 }
             }
         }
@@ -237,9 +309,9 @@ private fun NeonRoad(data: JourneySnapshot, greeting: String, period: ReportPeri
 }
 
 @Composable
-private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color, modifier: Modifier) {
+private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color, tip: Float, modifier: Modifier) {
     val shape = RoundedCornerShape(12.dp)
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier) {
         Row(Modifier.fillMaxWidth().clip(shape)
             .background(Brush.verticalGradient(listOf(tint.copy(alpha = .34f), Color(0xff211e48).copy(alpha = .87f))))
             .border(1.dp, tint.copy(alpha = .65f), shape).padding(horizontal = 8.dp, vertical = 5.dp),
@@ -250,12 +322,12 @@ private fun JourneyPin(label: String, count: Int, icon: ImageVector, tint: Color
                 Text(count.toString(), color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
         }
-        Canvas(Modifier.size(20.dp, 9.dp)) {
-            val pointer = Path().apply { moveTo(0f, 0f); lineTo(size.width, 0f); lineTo(size.width / 2f, size.height); close() }
+        Canvas(Modifier.fillMaxWidth().height(9.dp)) {
+            val x = size.width * tip
+            val half = 9.dp.toPx()
+            val pointer = Path().apply { moveTo(x - half, 0f); lineTo(x + half, 0f); lineTo(x, size.height); close() }
             drawPath(pointer, tint.copy(alpha = .86f))
         }
-        Spacer(Modifier.height(3.dp))
-        Box(Modifier.size(12.dp, 7.dp).clip(CircleShape).background(tint))
     }
 }
 

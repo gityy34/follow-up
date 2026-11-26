@@ -34,8 +34,8 @@ enum class AppFont(val title: String) {
 }
 internal const val PROFILE_REVIEW = 1
 
-internal fun isProfilePhoto(value: String): Boolean =
-    value.length in 4..90_000 && value.length % 4 == 0 && value.startsWith("/9j/") &&
+internal fun isProfilePhoto(value: String, limit: Int = 90_000): Boolean =
+    value.length in 4..limit && value.length % 4 == 0 && value.startsWith("/9j/") &&
         value.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "+/=" }
 
 
@@ -142,6 +142,7 @@ data class AppSettings(
     val profileConfigured: Boolean = false,
     val profileReview: Int = 0,
     val photo: String = "",
+    val photoSource: String = "",
     val font: AppFont = AppFont.DEFAULT
 )
 
@@ -325,4 +326,26 @@ fun report(workspace: Workspace, period: ReportPeriod, time: Long, timezone: Zon
     }.take(3)
     val deals = dealTotals(workspace.calls.filter { it.customerId in real }, start, callEnd)
     return Report(calls.size, outcomes, completed, due.size, issues, best, trend, tips, deals)
+}
+
+internal data class PhotoCrop(val left: Int, val top: Int, val side: Int)
+
+internal fun profileCrop(width: Int, height: Int, zoom: Float, x: Float, y: Float): PhotoCrop {
+    require(width > 0 && height > 0)
+    val side = (minOf(width, height) / zoom.coerceIn(1f, 3f)).toInt().coerceAtLeast(1)
+    val left = ((width - side) * (x.coerceIn(-1f, 1f) + 1f) / 2f).toInt()
+    val top = ((height - side) * (y.coerceIn(-1f, 1f) + 1f) / 2f).toInt()
+    return PhotoCrop(left, top, side)
+}
+
+internal data class TodayOverview(val successful: Int, val pending: Int, val other: Int, val deals: DealTotals) {
+    val total get() = successful + pending + other
+}
+
+internal fun todayOverview(data: Workspace, time: Long, timezone: ZoneId): TodayOverview {
+    val start = reportStart(ReportPeriod.TODAY, time, timezone)
+    val calls = data.calls.filter { it.endedAt in start..time }
+    val successful = calls.count { it.outcome == Outcome.RESOLVED }
+    val pending = calls.count { it.outcome == Outcome.PENDING }
+    return TodayOverview(successful, pending, calls.size - successful - pending, dealTotals(data.calls, start, time + 1))
 }

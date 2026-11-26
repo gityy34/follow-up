@@ -38,7 +38,7 @@ class BackupTest {
     }
     @Test fun profileReviewFontAndThumbnailRoundTrip() {
         val profile = AppSettings(operatorName = "Uzair", displayName = "Callx", profileReview = PROFILE_REVIEW,
-            profileConfigured = true, photo = "/9j/AA==", font = AppFont.MODERN)
+            profileConfigured = true, photo = "/9j/AA==", photoSource = "/9j/AQ==", font = AppFont.MODERN)
         assertEquals(profile, settingsFromJson(settingsJson(profile)))
         val restored = BackupCodec.import(BackupCodec.export(Workspace(settings = profile), pass).inputStream(), pass)
         assertEquals(profile, restored.settings)
