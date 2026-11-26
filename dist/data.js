@@ -144,9 +144,11 @@ export function reminderTime(row, defaultRule = 'DAY') {
 export function remindersFor(data, which = 'today', now = Date.now()) {
   const target = day(addDays(now,{yesterday:-1,today:0,tomorrow:1}[which] ?? 0));
   const ids = new Set(data.customers.filter(c => !c.archived).map(c => c.id));
-  return data.followUps.filter(f => ids.has(f.customerId) && f.status !== 'DELETED').map(f => ({
-    followUp:f, at:f.alertedAt ?? (f.status === 'DONE' ? null : f.snoozedUntil ?? reminderTime(f,data.settings.defaultReminderOffset))
-  })).filter(r => Number.isFinite(r.at) && day(r.at) === target).sort((a,b) => a.at-b.at || a.followUp.dueAt-b.followUp.dueAt);
+  return data.followUps.filter(f => ids.has(f.customerId) && f.status !== 'DELETED').map(f => {
+    const planned = reminderTime(f,data.settings.defaultReminderOffset);
+    const pending = f.status === 'OPEN' && planned != null ? f.snoozedUntil ?? f.reminderScheduledAt ?? planned : null;
+    return { followUp:f, at:f.alertedAt ?? pending };
+  }).filter(r => Number.isFinite(r.at) && day(r.at) === target).sort((a,b) => a.at-b.at || a.followUp.dueAt-b.followUp.dueAt);
 }
 export const pendingOutcomes = ['RESOLVED', 'CANCELLED', 'OTHER'];
 export const entryOutcomes = ['RESOLVED', 'PENDING', 'FOLLOW_UP', 'HANG_UP', 'NO_ANSWER', 'ISSUE', 'CANCELLED', 'OTHER'];
@@ -338,7 +340,7 @@ export async function encrypt(data, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const raw = JSON.stringify(data);
-  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.3.0' };
+  const manifest = { formatVersion: 2, createdAt: Date.now(), checksum: await checksum(raw), encrypted: true, appVersion: '1.3.1' };
   const payload = encoder.encode(JSON.stringify({ manifest, data: raw }));
   if (payload.length > 100 * 1024 * 1024) throw new Error('Backup is too large.');
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: magic }, await backupKey(password, salt), payload);

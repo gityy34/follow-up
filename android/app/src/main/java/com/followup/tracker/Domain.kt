@@ -223,8 +223,10 @@ fun remindersFor(data: Workspace, day: ReminderDay, time: Long, timezone: ZoneId
     val eligible = data.customers.filterNot { it.archived }.mapTo(hashSetOf()) { it.id }
     return data.followUps.mapNotNull { row ->
         if (row.customerId !in eligible || row.status == FollowStatus.DELETED) return@mapNotNull null
-        val at = if (row.status == FollowStatus.DONE) row.alertedAt else
-            row.alertedAt ?: row.snoozedUntil ?: reminderTime(row, data.settings.defaultReminder)
+        val planned = reminderTime(row, data.settings.defaultReminder)
+        val at = row.alertedAt ?: planned?.takeIf { row.status == FollowStatus.OPEN }?.let {
+            row.snoozedUntil ?: row.reminderScheduledAt ?: it
+        }
         at?.takeIf { it in from until end }?.let { ScheduledReminder(row, it) }
     }.sortedWith(compareBy<ScheduledReminder> { it.at }.thenBy { it.followUp.dueAt })
 }

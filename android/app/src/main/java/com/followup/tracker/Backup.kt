@@ -67,7 +67,7 @@ internal object BackupCodec {
         val nonce = ByteArray(nonceSize).also(random::nextBytes)
         val data = encode(workspace).toString()
         val manifest = obj("formatVersion" to 2, "createdAt" to now(), "checksum" to digest(data.toByteArray()),
-            "encrypted" to true, "appVersion" to "1.3.0")
+            "encrypted" to true, "appVersion" to "1.3.1")
         val payload = obj("manifest" to manifest, "data" to data).toString().toByteArray()
         require(payload.size <= maxSize) { "This backup exceeds this version’s file size limit." }
         return try { magic + salt + nonce + cipher(Cipher.ENCRYPT_MODE, passphrase, salt, nonce).doFinal(payload) }

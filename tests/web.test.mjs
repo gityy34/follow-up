@@ -113,3 +113,16 @@ test('neon dashboard dates, profile defaults, and weekend reminders', async () =
   assert.equal(load(old).settings.themeMode,'NEON');
   assert.equal(load(old).settings.profileConfigured,false);
 });
+
+test('a pending reminder moves to the day of its actual reschedule', async () => {
+  const { remindersFor } = await import('../dist/data.js');
+  const w = workspace();
+  const now = new Date(2026,10,29,12).getTime();
+  const c = customer({displayName:'Customer'});
+  w.customers.push(c);
+  w.followUps.push(followUp({customerId:c.id,purpose:'Catch-up',dueAt:now+3600000,reminderScheduledAt:now+1500}));
+  assert.equal(remindersFor(w,'today',now)[0].at,now+1500);
+  assert.equal(remindersFor(w,'yesterday',now).length,0);
+  w.followUps[0].reminderPolicy='OFF';
+  assert.equal(remindersFor(w,'today',now).length,0);
+});

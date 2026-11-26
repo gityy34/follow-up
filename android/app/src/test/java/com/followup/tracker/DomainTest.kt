@@ -116,4 +116,16 @@ class DomainTest {
         assertEquals(rows[1], remindersFor(data, ReminderDay.TODAY, clock, tz).single().followUp)
         assertEquals(rows[2], remindersFor(data, ReminderDay.TOMORROW, clock, tz).single().followUp)
     }
+    @Test fun reminderListPrefersTheActualRescheduledTime() {
+        val tz = ZoneId.of("Asia/Karachi")
+        val today = ZonedDateTime.of(2026, 11, 29, 12, 0, 0, 0, tz).toInstant().toEpochMilli()
+        val customer = Customer(displayName = "Customer", phoneNumber = "")
+        val rescheduled = FollowUp(customerId = customer.id, purpose = "Same-day catch-up",
+            dueAt = today + 3_600_000L, timezoneId = tz.id, reminderScheduledAt = today + 1500)
+        val data = Workspace(customers = listOf(customer), followUps = listOf(rescheduled))
+        assertEquals(today + 1500, remindersFor(data, ReminderDay.TODAY, today, tz).single().at)
+        assertTrue(remindersFor(data, ReminderDay.YESTERDAY, today, tz).isEmpty())
+        val disabled = data.copy(followUps = listOf(rescheduled.copy(reminderPolicy = Reminder.OFF)))
+        assertTrue(remindersFor(disabled, ReminderDay.TODAY, today, tz).isEmpty())
+    }
 }
