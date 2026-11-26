@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f6f5ef">
+<meta name="description" content="Keep track of who to follow up with and when.">
+<title>Follow Up</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header><div class="bar"><a href="./" class="brand"><span aria-hidden="true">↗</span> Follow Up</a><button id="install" class="outline" hidden>Install app</button></div></header>
+<main>
+<section class="intro">
+<div><h1>Keep in touch.</h1><p>Remember who to follow up with, and when.</p></div>
+<button id="add" class="primary">＋ New follow-up</button>
+</section>
+<section class="stats" aria-label="Follow-up totals">
+<div><span>Due today or earlier</span><strong id="due-count">0</strong></div>
+<div><span>Upcoming</span><strong id="upcoming-count">0</strong></div>
+<div><span>Completed</span><strong id="done-count">0</strong></div>
+</section>
+<section class="queue" aria-labelledby="queue-title">
+<div class="toolbar"><h2 id="queue-title">Your follow-ups</h2><input id="search" type="search" placeholder="Search follow-ups" aria-label="Search follow-ups"></div>
+<div class="filters" role="group" aria-label="Filter follow-ups">
+<button data-filter="active" aria-pressed="true">Active</button>
+<button data-filter="due" aria-pressed="false">Due</button>
+<button data-filter="upcoming" aria-pressed="false">Upcoming</button>
+<button data-filter="done" aria-pressed="false">Completed</button>
+</div>
+<p id="status" role="status"></p>
+<ul id="items"></ul>
+<p id="empty"></p>
+</section>
+<footer>Follow-ups are saved on this device.</footer>
+</main>
+<dialog id="editor" aria-labelledby="editor-title">
+<form id="follow-up-form">
+<h2 id="editor-title">New follow-up</h2>
+<label>Title<input name="title" required maxlength="120" placeholder="Send the project proposal"></label>
+<label>Contact<input name="contact" maxlength="120" placeholder="Name or email"></label>
+<label>Due date<input name="date" type="date" required></label>
+<label>Notes<textarea name="notes" rows="3" maxlength="2000"></textarea></label>
+<p id="editor-error" role="alert"></p>
+<div class="actions"><button type="button" id="cancel" class="outline">Cancel</button><button class="primary">Save follow-up</button></div>
+</form>
+</dialog>
+</body>
+</html>
