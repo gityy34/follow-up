@@ -13,7 +13,7 @@
 <script src="app.js" defer></script>
 </head>
 <body>
-<header><div class="bar"><a href="./" class="brand"><span aria-hidden="true">↗</span> Follow Up</a><button id="install" class="outline" hidden>Install app</button></div></header>
+<header><div class="bar"><a href="./" class="brand"><span aria-hidden="true">↗</span> Follow Up</a><button id="install" class="outline" aria-haspopup="dialog" hidden>Install options</button></div></header>
 <main>
 <section class="intro">
 <div><h1>Keep in touch.</h1><p>Remember who to follow up with, and when.</p></div>
@@ -48,6 +48,24 @@
 <p id="editor-error" role="alert"></p>
 <div class="actions"><button type="button" id="cancel" class="outline">Cancel</button><button class="primary">Save follow-up</button></div>
 </form>
+</dialog>
+<dialog id="install-options" aria-labelledby="install-title">
+<div class="install-content">
+<h2 id="install-title">Install Follow Up</h2>
+<div id="browser-install">
+<p id="install-instructions">Use the install option in your browser’s menu.</p>
+<button id="browser-prompt" type="button" class="primary" hidden>Install website app</button>
+</div>
+<div id="android-downloads" hidden>
+<h3>Android APKs</h3>
+<p>Open the downloaded APK on your Android device to install it.</p>
+<div class="download-links">
+<a href="downloads/follow-up-release.apk" download>Release APK</a>
+<a href="downloads/follow-up-debug.apk" download>Debug APK</a>
+</div>
+</div>
+<form method="dialog" class="install-close"><button class="outline">Close</button></form>
+</div>
 </dialog>
 </body>
 </html>

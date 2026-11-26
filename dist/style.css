@@ -8,6 +8,7 @@
   --line: #d5dbd2;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; }
 header { border-bottom: 1px solid var(--line); }
 main, .bar { width: min(100% - 2rem, 66rem); margin: auto; }
@@ -54,6 +55,13 @@ dialog::backdrop { background: #192c23a8; }
 form { display: grid; gap: .85rem; }
 label { display: grid; gap: .3rem; font-weight: 600; }
 form .actions { justify-content: end; }
+.install-content, #browser-install, #android-downloads { display: grid; gap: .75rem; }
+.install-content h3 { margin: 0; }
+.install-content p { color: var(--muted); }
+#android-downloads { border-top: 1px solid var(--line); padding-top: .85rem; }
+.download-links { display: flex; flex-wrap: wrap; gap: .85rem; }
+.download-links a { color: var(--green); font-weight: 650; }
+.install-close { justify-content: end; }
 @media (max-width: 38rem) {
   .intro, .toolbar, li { flex-direction: column; align-items: stretch; }
   .intro button { align-self: start; }

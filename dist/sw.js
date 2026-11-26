@@ -1,8 +1,10 @@
 'use strict';
 
 const cachePrefix = `follow-up:${self.registration.scope}:`;
-const cacheName = `${cachePrefix}v1`;
+const cacheName = `${cachePrefix}v2`;
 const assets = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+
+const assetPaths = new Set(assets.map(asset => new URL(asset, self.registration.scope).pathname));
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(assets)));
@@ -16,11 +18,12 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const request = event.request;
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
-
-  if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(() => caches.open(cacheName).then(cache => cache.match('./'))));
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin || !assetPaths.has(url.pathname)) {
     return;
   }
-  event.respondWith(caches.open(cacheName).then(async cache => (await cache.match(request)) ?? fetch(request)));
+
+  event.respondWith(caches.open(cacheName).then(async cache =>
+    (await cache.match(request, { ignoreSearch: true })) ?? fetch(request)
+  ));
 });

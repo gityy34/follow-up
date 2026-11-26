@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.FollowUp" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#f6f5ef</item>
+        <item name="android:statusBarColor">#f6f5ef</item>
+        <item name="android:navigationBarColor">#f6f5ef</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:colorAccent">#1d513b</item>
+    </style>
+</resources>

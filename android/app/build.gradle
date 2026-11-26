@@ -1,0 +1,80 @@
+plugins {
+    id 'com.android.application'
+}
+
+def releaseSigning = [
+    storePath: providers.environmentVariable('FOLLOW_UP_KEYSTORE'),
+    storePassword: providers.environmentVariable('FOLLOW_UP_STORE_PASSWORD'),
+    keyAlias: providers.environmentVariable('FOLLOW_UP_KEY_ALIAS'),
+    keyPassword: providers.environmentVariable('FOLLOW_UP_KEY_PASSWORD')
+]
+def canSignRelease = releaseSigning.values().every { it.isPresent() && !it.get().isBlank() }
+
+android {
+    namespace = 'com.followup.tracker'
+    compileSdk = 36
+    buildToolsVersion = '36.0.0'
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        applicationId = 'com.followup.tracker'
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = '1.0.0'
+    }
+
+    signingConfigs {
+        if (canSignRelease) {
+            release {
+                storeFile = rootProject.file(releaseSigning.storePath.get())
+                storePassword = releaseSigning.storePassword.get()
+                keyAlias = releaseSigning.keyAlias.get()
+                keyPassword = releaseSigning.keyPassword.get()
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = '.debug'
+            versionNameSuffix = '-debug'
+            resValue 'string', 'app_name', 'Follow Up Debug'
+        }
+        release {
+            if (canSignRelease) {
+                signingConfig = signingConfigs.release
+            }
+            resValue 'string', 'app_name', 'Follow Up'
+        }
+    }
+}
+
+def webAssetsDirectory = layout.buildDirectory.dir('generated/webAssets')
+def syncWebAssets = tasks.register('syncWebAssets', Sync) {
+    from(rootProject.layout.projectDirectory.dir('dist')) {
+        include 'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'
+    }
+    into(webAssetsDirectory)
+}
+
+android.sourceSets.main.assets.srcDir(webAssetsDirectory.get().asFile)
+tasks.matching { it.name == 'preBuild' }.configureEach {
+    dependsOn(syncWebAssets)
+}
+
+def verifyReleaseSigning = tasks.register('verifyReleaseSigning') {
+    doLast {
+        if (!canSignRelease) {
+            throw new GradleException('Set FOLLOW_UP_KEYSTORE, FOLLOW_UP_STORE_PASSWORD, FOLLOW_UP_KEY_ALIAS and FOLLOW_UP_KEY_PASSWORD to build a signed release.')
+        }
+    }
+}
+
+tasks.matching { it.name == 'packageRelease' || it.name == 'signReleaseBundle' }.configureEach {
+    dependsOn(verifyReleaseSigning)
+}

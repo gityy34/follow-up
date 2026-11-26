@@ -155,18 +155,63 @@ document.querySelector('.filters').addEventListener('click', event => {
 });
 window.addEventListener('focus', render);
 
-window.addEventListener('beforeinstallprompt', event => {
-  event.preventDefault();
-  install.hidden = false;
-  install.onclick = async () => {
-    install.hidden = true;
-    await event.prompt();
-  };
-});
-window.addEventListener('appinstalled', () => { install.hidden = true; });
+if (location.hostname !== 'appassets.androidplatform.net') {
+  const options = document.querySelector('#install-options');
+  const promptButton = document.querySelector('#browser-prompt');
+  const instructions = document.querySelector('#install-instructions');
+  const browserInstall = document.querySelector('#browser-install');
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  let deferredPrompt;
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(error => console.warn('Offline setup failed', error));
+  install.hidden = !!standalone;
+  browserInstall.hidden = !!standalone;
+  install.addEventListener('click', () => options.showModal());
+
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) {
+    instructions.textContent = 'In Safari, tap Share, then Add to Home Screen.';
+  }
+
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    deferredPrompt = event;
+    promptButton.hidden = false;
+    instructions.hidden = true;
+  });
+
+  promptButton.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    const event = deferredPrompt;
+    deferredPrompt = null;
+    promptButton.hidden = true;
+    instructions.hidden = false;
+    try {
+      await event.prompt();
+    } catch {
+      instructions.textContent = 'Open your browser’s menu and choose its install option.';
+    }
+  });
+
+  window.addEventListener('appinstalled', () => {
+    browserInstall.hidden = true;
+    if (document.querySelector('#android-downloads').hidden) {
+      install.hidden = true;
+      options.close();
+    }
+  });
+
+  fetch('./downloads/android-builds.json', { cache: 'no-store' })
+    .then(response => response.ok ? response.json() : null)
+    .then(metadata => {
+      if (metadata?.androidApks === true) {
+        document.querySelector('#android-downloads').hidden = false;
+        install.hidden = false;
+      }
+    }).catch(() => {});
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(error => console.warn('Offline setup failed', error));
+  }
 }
 
 render();
